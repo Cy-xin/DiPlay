@@ -18,8 +18,8 @@ android {
         minSdk = 25
         targetSdk = 37
         // carlito | Fork installs must upgrade from code 39 while matching upstream's name.
-        versionCode = 41
-        versionName = "0.2.16"
+        versionCode = 42
+        versionName = "0.2.17"
 
     }
 

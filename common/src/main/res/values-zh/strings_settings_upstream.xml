@@ -49,4 +49,21 @@
     <string name="settings_navigation_wheel_service_required">请在 Android 设置中允许方向盘按键无障碍服务，或使用现有 ADB 授权按钮。</string>
     <string name="settings_navigation_wheel_volume">导航播报时方向盘调节导航音量（实验性）</string>
     <string name="settings_navigation_wheel_volume_description">CarPlay 导航播报期间，音量键调节所选导航音量；其他时候按车机原有方式处理。需要方向盘按键无障碍权限。通话、地图缩放和摇杆保持优先。选择自动或媒体通道时不接管音量键。</string>
+
+    <!-- Added in upstream 0.2.17 settings -->
+    <string name="settings_hide_byd_call_popup">通话时隐藏 BYD 来电弹窗（实验性）</string>
+    <string name="settings_hide_byd_call_popup_description">使用已授权的网络 ADB 隐藏车机来电卡片，并在通话结束或 CarPlay 停止后恢复。仅适用于部分 BYD 车机；启用前请查看设置说明。</string>
+    <string name="settings_built_in_car_hotspot_recommended">车载热点（推荐）</string>
+    <string name="settings_external_controller">外接控制器（实验性）</string>
+    <string name="settings_external_controller_description">已配对的蓝牙键盘、遥控器或旋钮控制器的按键可在 CarPlay 中移动和确认选择，就像车上的旋钮。触摸屏仍可使用。立即生效。</string>
+    <string name="settings_usb_connection">USB 连接</string>
+    <string name="settings_usb_charging">iPhone 充电</string>
+    <string name="settings_usb_charging_normal">标准（2.4 A）</string>
+    <string name="settings_usb_charging_reduced">降低（1.5 A）</string>
+    <string name="settings_usb_charging_low">低（0.5 A）</string>
+    <string name="settings_usb_charging_description">DiPlay 通过 USB 允许 iPhone 使用的充电电流。如果有线 CarPlay 每隔几秒断开、iPhone 自行重新连接，可能是车机 USB 口供电不足：请先试「降低」，再试「低」。iPhone 充电会变慢。下次 USB 连接时生效。</string>
+    <string name="settings_background_update_checks">在后台检查更新</string>
+    <string name="settings_background_update_checks_description">DiPlay 每天会在 GitHub 上检查一次新版本，并显示在主屏幕上。未经你点击，绝不会下载。</string>
+    <string name="settings_ambient_album">跟随专辑封面</string>
+    <string name="settings_ambient_album_description">按封面取色并近似匹配原车可用色号。灰黑或无封面时使用全部31色；大面积白色封面可使用白色或冷白。</string>
 </resources>
