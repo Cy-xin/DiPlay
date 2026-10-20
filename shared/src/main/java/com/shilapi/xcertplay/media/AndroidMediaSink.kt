@@ -60,6 +60,7 @@ class AndroidMediaSink(
     private val audioFocusAutoYield: Boolean = true,
     private val mediaChannel: Int = 0,
     private val navigationChannel: Int = 0,
+    navigationAttenuationDb: Int = 0,
     context: Context? = null,
     private val navigationStreamType: Int = AudioChannelMapper.DEFAULT_NAVIGATION_STREAM_TYPE,
     onScreenStreamActiveChanged: ((Int, Boolean) -> Unit)? = null,
@@ -78,6 +79,8 @@ class AndroidMediaSink(
     private val callEchoCancellation: Boolean = false,
     /** Cut the bass that head units add when they play a call as music. */
     private val callVoiceFilter: Boolean = false,
+    private val callSpeakerphone: () -> Boolean = { false },
+    private val mtkDecoderTuningEnabled: Boolean = false,
     /**
      * Smooth video: show main-screen frames at the iPhone's frame time plus a delay that starts here and
      * then follows how late the decoder releases frames ([PacingDelay]); 0 shows each as soon as it is
@@ -142,6 +145,7 @@ class AndroidMediaSink(
     private val mediaAudioTypes = mutableSetOf<AudioStreamId>()
     private val telephonyAudioTypes = mutableSetOf<AudioStreamId>()
     private val audioRenderers = ConcurrentHashMap<AudioStreamId, AudioRenderer>()
+    @Volatile private var navigationAttenuationDb = NavigationAudioGain.clamp(navigationAttenuationDb)
     // carlito | Capture restarts retain the same RTP counters until the negotiated stream ends.
     private data class PendingMicrophone(val config: MicrophoneConfig, val counters: MicrophoneCounters = MicrophoneCounters(), var retryAt: Long = 0L)
     private data class ActiveMicrophone(val request: PendingMicrophone, val uplink: MicrophoneUplink)
@@ -747,14 +751,21 @@ class AndroidMediaSink(
             unifiedMediaOutput,
             echoReference = echoReference,
             voiceFilter = callVoiceFilter && format.audioType == TELEPHONY_AUDIO_TYPE,
+            navigationAttenuationDb = navigationAttenuationDb,
             onReleased = { renderer ->
                 val callReleased = synchronized(audioModeLock) { closingCommunicationRenderers.remove(renderer) }
                 if (callReleased) finishCommunication(force = true)
             },
             ambientSinkToken = ambientSinkToken,
             speakerphoneCall = format.audioType == "telephony" &&
-                appContext != null && BydBluetoothSuspend.isSuspendedByUs(appContext),
+                (runCatching(callSpeakerphone).getOrDefault(false) ||
+                    appContext != null && BydBluetoothSuspend.isSuspendedByUs(appContext)),
         ).also { audioRenderers[id] = it }
+    }
+
+    fun setNavigationAttenuationDb(db: Int) {
+        navigationAttenuationDb = NavigationAudioGain.clamp(db)
+        audioRenderers.values.forEach { it.setNavigationAttenuationDb(navigationAttenuationDb) }
     }
 
     // carlito | Never drop negotiated streams or microphones. Only confirmed native music yields locally.
@@ -833,7 +844,7 @@ internal class ParkingOutput(width: Int, height: Int) {
 internal fun videoOperatingRate(type: Int, statsLabel: String?, frameRate: Int): Int =
     if (type == MAIN_SCREEN_TYPE && statsLabel == null && frameRate > 0) frameRate else 0
 
-internal data class DecoderAttempt(val codecName: String?, val tuned: Boolean, val operatingRate: Int = 0)
+internal data class DecoderAttempt(val codecName: String?, val tuned: Boolean, val operatingRate: Int = 0, val mtkMode: MtkDecoderMode = MtkDecoderMode.NONE)
 
 /**
  * Configure attempts in order. Some vendor decoders (e.g. MediaTek c2.mtk.avc.decoder) reject the tuned
@@ -845,14 +856,16 @@ internal fun videoDecoderAttempts(
     operatingRate: Int,
     softwareDecoder: String?,
     lowLatencyDecoder: String? = null,
-): List<DecoderAttempt> = listOfNotNull(
-    lowLatencyDecoder?.let { DecoderAttempt(it, tuned = true, operatingRate = operatingRate).takeIf { operatingRate > 0 } },
-    lowLatencyDecoder?.let { DecoderAttempt(it, tuned = true) },
-    DecoderAttempt(codecName = null, tuned = true, operatingRate = operatingRate).takeIf { operatingRate > 0 },
-    DecoderAttempt(codecName = null, tuned = true),
-    DecoderAttempt(codecName = null, tuned = false),
-    softwareDecoder?.let { DecoderAttempt(it, tuned = false) },
-)
+    maximumMtkMode: MtkDecoderMode = MtkDecoderMode.NONE,
+): List<DecoderAttempt> = buildList {
+    if (operatingRate > 0) lowLatencyDecoder?.let { add(DecoderAttempt(it, tuned = true, operatingRate)) }
+    lowLatencyDecoder?.let { add(DecoderAttempt(it, tuned = true)) }
+    val modes = maximumMtkMode.attempts()
+    if (operatingRate > 0) modes.forEach { add(DecoderAttempt(null, true, operatingRate, it)) }
+    modes.forEach { add(DecoderAttempt(null, true, mtkMode = it)) }
+    add(DecoderAttempt(codecName = null, tuned = false))
+    softwareDecoder?.let { add(DecoderAttempt(it, tuned = false)) }
+}
 
 /**
  * The operating rate to ask for at the next configure: none once a later attempt ([used]) worked after
@@ -1439,7 +1452,7 @@ private class VideoDecoder(
                 "video decoder first input avcc=${nalus.size} annexB=${annexB.size}",
             )
         }
-        val index = VideoInputPump.acquire(
+        val index = DecoderInputPump.acquire(
             running = { running }, drain = { if (outputThread == null) drainOutput(codec) },
             dequeue = { codec.dequeueInputBuffer(INPUT_TIMEOUT_US) },
         )
@@ -1693,6 +1706,7 @@ private class AudioRenderer(
     private val unifiedMediaOutput: Boolean,
     private val onReleased: (AudioRenderer) -> Unit,
     private val ambientSinkToken: Long,
+    navigationAttenuationDb: Int = 0,
     private val speakerphoneCall: Boolean = false,
     /** Receives the played call audio so the call microphone can cancel its echo. */
     private val echoReference: EchoReference? = null,
@@ -1716,6 +1730,8 @@ private class AudioRenderer(
     private var codec: MediaCodec? = null
     private var softwareOpusDecoder: SoftwareOpusDecoder? = null
     private var track: AudioTrack? = null
+    @Volatile private var navigationAttenuationDb = NavigationAudioGain.clamp(navigationAttenuationDb)
+    private var appliedNavigationAttenuationDb: Int? = null
     private var pcm = ByteArray(64 * 1024)
     private var playbackStarted = false
     private var prebufferBytes = 0
@@ -1819,6 +1835,7 @@ private class AudioRenderer(
             diagnosticStage = "focus"
             requestAudioFocus()
             while (running) {
+                applyNavigationAttenuation()
                 audioFocusCoordinator.refreshSpeechPlayback()
                 if (routeRefreshRequested.getAndSet(false)) applyPreferredOutput()
                 if (resumeRequested.getAndSet(false) && playbackStarted) {
@@ -2176,6 +2193,24 @@ private class AudioRenderer(
             .putLong(OPUS_SEEK_PRE_ROLL_NANOS)
             .array()
 
+    fun setNavigationAttenuationDb(db: Int) {
+        navigationAttenuationDb = NavigationAudioGain.clamp(db)
+    }
+
+    private fun applyNavigationAttenuation() {
+        if (mappedChannel != AudioChannel.NAVIGATION) return
+        val requestedDb = navigationAttenuationDb
+        if (requestedDb == 0 && appliedNavigationAttenuationDb == null) return
+        if (appliedNavigationAttenuationDb == requestedDb) return
+        appliedNavigationAttenuationDb = requestedDb
+        runCatching { report("Audio: navigation attenuation=${requestedDb}dB applied=true") }
+    }
+
+    private fun attenuateNavigation(data: ByteArray, offset: Int, length: Int) {
+        if (mappedChannel != AudioChannel.NAVIGATION) return
+        NavigationAudioGain.scalePcm16(data, offset, length, navigationAttenuationDb)
+    }
+
     private fun handle(packet: AudioPacket) {
         val rtp = packet.rtp
         when (format.codec) {
@@ -2348,6 +2383,8 @@ private class AudioRenderer(
             )
         }
         voiceFilter?.process(data, offset, length)
+        applyNavigationAttenuation()
+        attenuateNavigation(data, offset, length)
         if (!fadeApplied) {
             applyFadeIn(data, offset, length)
             fadeApplied = true

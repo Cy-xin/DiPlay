@@ -709,6 +709,15 @@ internal object CarPlayMediaKeys {
         )
     }
 
+    /** A steering-wheel media key captured outside the Android key stream (Geely/Lynk). */
+    internal fun onExternalMediaKey(index: Int) = send(index, "geely-wheel")
+
+    /** The steering-wheel microphone key captured outside the Android key stream (Geely/Lynk). */
+    internal fun onExternalSiriKey(): Boolean {
+        val active = synchronized(this) { controller } ?: return false
+        return runCatching { active.requestSiri() }.getOrDefault(false)
+    }
+
     private fun send(index: Int, source: String) {
         val group = if (source in listOf("oneos", "ecarx", "vehicle_bridge", "logcat", "broadcast")) source else "media_session"
         val now = SystemClock.elapsedRealtime()

@@ -10,6 +10,8 @@ import android.os.Build
 import androidx.annotation.RequiresApi
 import java.io.Closeable
 import java.io.File
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.NetworkInterface
 import java.util.Collections
 
@@ -117,3 +119,12 @@ internal fun legacyHotspotInterfaces(tethered: List<String>, wifiRegexes: List<S
 internal fun wirelessInterfaceName(name: String): Boolean =
     name.startsWith("wlan") || name.startsWith("swlan") || name.startsWith("ap") ||
         name.contains("softap", ignoreCase = true) || name.startsWith("wifi") || name.startsWith("p2p")
+
+
+/** An address a hotspot publishes to its clients: a usable IPv4, or a scoped link-local IPv6. */
+internal fun publishesHotspotAddress(address: java.net.InetAddress): Boolean = when (address) {
+    is Inet4Address -> !address.isLoopbackAddress && !address.isAnyLocalAddress &&
+        !address.isLinkLocalAddress && !address.isMulticastAddress
+    is Inet6Address -> address.isLinkLocalAddress
+    else -> false
+}

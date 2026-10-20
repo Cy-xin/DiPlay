@@ -86,6 +86,7 @@ import com.shilapi.xcertplay.transport.I2cTransport
 import com.shilapi.xcertplay.transport.I2cTransportException
 import com.shilapi.xcertplay.transport.IphoneCarPlayConfiguration
 import com.shilapi.xcertplay.transport.IphoneUsbException
+import com.shilapi.xcertplay.transport.IphoneUsbAdbGrant
 import com.shilapi.xcertplay.transport.IphoneUsbHost
 import com.shilapi.xcertplay.transport.IphoneUsbMatcher
 import com.shilapi.xcertplay.transport.LinuxI2cTransport
@@ -229,6 +230,8 @@ class CarPlayController(
     private val permissionGrant = AtomicBoolean(false)
     private val availabilityPollGeneration = AtomicInteger(0)
     private var permissionPollGeneration = 0
+    private val usbAdbGrantAttempts = mutableSetOf<String>()
+    private val pendingUsbAdbGrants = mutableSetOf<String>()
     private var reenumerationAttempts = 0
     private var lastReportedStatus: CarPlayStatus? = null
     private var mfiResetLogged = false
@@ -240,6 +243,15 @@ class CarPlayController(
     @Volatile private var mux: Iap2UsbMuxHost? = null
     @Volatile private var csm: Iap2Session? = null
     @Volatile private var activeSession: AirPlaySession? = null
+    private data class SessionCornerMask(val session: AirPlaySession, val png: ByteArray, val width: Int)
+    @Volatile private var currentCornerMask: SessionCornerMask? = null
+
+    fun activeIphoneCornerMask(): Triple<AirPlaySession, ByteArray, Int>? {
+        val current = currentCornerMask ?: return null
+        if (closed || activeSession !== current.session || current.session.isClosed) return null
+        return Triple(current.session, current.png.copyOf(), current.width)
+    }
+
     @Volatile private var requestedDashboardUrl: String? = airPlayConfig.cluster?.initialUrl
     private val clusterUiLock = Any()
     private var clusterUiStream: Pair<AirPlaySession, Int>? = null
@@ -360,7 +372,13 @@ class CarPlayController(
             uiListener?.onSessionActive(session)
         }
 
+        override fun onCornerMask(session: AirPlaySession, png: ByteArray, displayWidth: Int) {
+            if (closed || session.isClosed || (activeSession != null && activeSession !== session)) return
+            currentCornerMask = SessionCornerMask(session, png.copyOf(), displayWidth)
+        }
+
         override fun onSessionEnded(session: AirPlaySession) {
+            if (currentCornerMask?.session === session) currentCornerMask = null
             mainHandler.post {
                 if (factoryBluetoothSession === session) {
                     factoryBluetoothGuard?.close()
@@ -1920,6 +1938,8 @@ class CarPlayController(
         availabilityPollGeneration.incrementAndGet()
         phase = Phase.IPHONE
         reenumerationAttempts = 0
+        usbAdbGrantAttempts.clear()
+        pendingUsbAdbGrants.clear()
         onStatus(CarPlayStatus.DiscoveringIphone)
         checkIphoneAvailability()
     }
@@ -1944,10 +1964,10 @@ class CarPlayController(
         mainHandler.post { doRequestIphonePermission(device) }
     }
 
-    private fun doRequestIphonePermission(device: UsbDevice) {
-        if (closed) return
+    private fun doRequestIphonePermission(device: UsbDevice, allowAdbFallback: Boolean = true) {
+        if (closed || usbAdbGrantKey(device) in pendingUsbAdbGrants) return
         try {
-            when (val request = iphoneHost.requestPermission(device)) {
+            when (val request = iphoneHost.requestPermission(device, allowAdbFallback)) {
                 is IphoneUsbHost.PermissionRequest.AlreadyGranted -> {
                     debugLog("wired iPhone USB permission already granted")
                     permissionGrant.set(false)
@@ -1959,9 +1979,45 @@ class CarPlayController(
                     onStatus(CarPlayStatus.RequestingIphonePermission)
                     pollIphonePermission(device)
                 }
+                is IphoneUsbHost.PermissionRequest.AdbRequired -> {
+                    debugLog("wired iPhone USB permission route=ADB; system permission UI unavailable")
+                    permissionGrant.set(false)
+                    permissionPollGeneration++
+                    onStatus(CarPlayStatus.RequestingIphonePermission)
+                    attemptIphoneUsbAdbGrant(request.device)
+                }
             }
         } catch (error: Throwable) {
             fail(error)
+        }
+    }
+
+    private fun usbAdbGrantKey(device: UsbDevice): String =
+        "$phase:$reenumerationAttempts:${device.deviceName}:${device.deviceId}"
+
+    private fun attemptIphoneUsbAdbGrant(device: UsbDevice) {
+        val key = usbAdbGrantKey(device)
+        if (!usbAdbGrantAttempts.add(key)) {
+            doRequestIphonePermission(device, allowAdbFallback = false)
+            return
+        }
+        pendingUsbAdbGrants.add(key)
+        val grantPhase = phase
+        val grantGeneration = permissionPollGeneration
+        connectionDiagnostic("USB permission ADB grant starting phase=$phase reenumerationAttempts=$reenumerationAttempts")
+        executor.execute {
+            val result = runCatching { IphoneUsbAdbGrant.grant(appContext, device) }
+                .getOrElse { IphoneUsbAdbGrant.Result(IphoneUsbAdbGrant.Code.ERROR) }
+            connectionDiagnostic("USB permission ADB grant result=${result.code} attached=${result.attached} granted=${result.granted}")
+            mainHandler.post {
+                if (closed || phase != grantPhase || permissionPollGeneration != grantGeneration) return@post
+                pendingUsbAdbGrants.remove(key)
+                if (requireUsbManager().hasPermission(device)) {
+                    onIphonePermission(IphoneUsbHost.PermissionResult.Granted(device))
+                } else {
+                    doRequestIphonePermission(device, allowAdbFallback = false)
+                }
+            }
         }
     }
 
@@ -2990,6 +3046,7 @@ class CarPlayController(
         private const val WIRELESS_HANDOFF_TIMEOUT_MILLIS = 45_000L
         private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 15_000L
         private const val MAXIMUM_REENUMERATION_ATTEMPTS = 2
+        const val REENUMERATION_WAIT_MILLIS = 10_000L
         private const val EXECUTOR_CLOSE_TIMEOUT_MILLIS = 2_000L
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"
         private val BLUETOOTH_ADDRESS = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")

@@ -40,6 +40,7 @@ internal class MicrophoneUplink(
     private val preferredInput: AudioOutputDevice? = null,
     private val audioManager: AudioManager? = null,
     private val counters: MicrophoneCounters = MicrophoneCounters(),
+    private val noAudioRestartMillis: Long = 1_000L,
     private val opusEncoderFactory: (Int) -> MicrophoneOpusEncoder? = { bitrate ->
         MicrophoneOpusEncoders.create(
             bitrate = bitrate,
@@ -536,4 +537,11 @@ internal class CaptureClock(private val sampleRate: Int) {
     private companion object {
         const val FALLBACK_LATENCY_NS = 20_000_000L
     }
+}
+
+
+internal fun telephonyMicrophoneSource(speakerphoneCall: Boolean, carPhoneState: Boolean, geelyHeadUnit: Boolean): Int = when {
+    carPhoneState && !geelyHeadUnit -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+    speakerphoneCall -> MediaRecorder.AudioSource.MIC
+    else -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
 }

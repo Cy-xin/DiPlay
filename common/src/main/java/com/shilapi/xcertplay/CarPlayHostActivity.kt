@@ -4697,7 +4697,7 @@ class CarPlayHostActivity : ComponentActivity() {
             onScreenStreamActiveChanged = { type, active ->
                 onScreenStreamStateChanged(controllerGeneration, type, active)
             },
-            mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this),
+            mediaBufferMillis = AirPlayPersistence.loadMediaBufferMillis(this, wireless = wirelessEnabled),
             onAudioDiagnostic = { message ->
                 if (message.startsWith("Microphone: ")) {
                     AsyncDiagnosticLog.append(diagnosticLog, message)
@@ -5137,6 +5137,9 @@ class CarPlayHostActivity : ComponentActivity() {
         mainHandler.postDelayed(applyDisplaySize,
             if (sessionDisplay?.viewAreas?.turnsWithScreen == true) 0L else DISPLAY_CHANGE_DEBOUNCE_MILLIS)
     }
+
+    private fun statusBarShown(): Boolean? =
+        ViewCompat.getRootWindowInsets(window.decorView)?.isVisible(WindowInsetsCompat.Type.statusBars())
 
     private fun isMultiWindowActive(): Boolean {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInMultiWindowMode
@@ -6047,7 +6050,17 @@ internal data class CarPlaySessionDisplay(
     val windowHeight: Int,
     /** The view areas this session declared, or null for the whole screen as one area. */
     val viewAreas: CarPlayViewAreas? = null,
+    val statusBarShown: Boolean? = null,
 )
+
+/** Another window can temporarily hide a previously visible status bar and enlarge the usable window. */
+internal fun statusBarHiddenByAnotherWindow(
+    display: CarPlaySessionDisplay,
+    width: Int,
+    height: Int,
+    statusBarShown: Boolean?,
+): Boolean = !display.hideTopBar && display.statusBarShown == true && statusBarShown == false &&
+    width == display.windowWidth && height > display.windowHeight
 
 /** Process-local hand-off for keeping the CarPlay session alive while no Activity is visible. */
 internal object CarPlayBackgroundSession {

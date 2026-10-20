@@ -4,7 +4,7 @@ This public preview is an independent receiver, not an Apple-certified CarPlay a
 
 | Area | Current scope |
 | --- | --- |
-| Head unit | Android 7.1+ (API 25+) APK; Android 7.1–8.1 support is not yet confirmed on a vehicle, and Android 7.x has no local-only hotspot (use the car hotspot, Wi-Fi Direct or Existing Wi-Fi); Android 7.0 and older are unsupported; Wi-Fi Direct has a firmware-dependent legacy Android 7.1–9 path with unverified requested frequency, and modern verified frequency on Android 10+ |
+| Head unit | Android 7.0+ (API 24+) APK; Android 7.0–8.1 support is not yet confirmed on a vehicle, and Android 7.x has no local-only hotspot (use the car hotspot, Wi-Fi Direct or Existing Wi-Fi) and refuses an app's request to turn the car hotspot on, so on head units that are not BYD the driver turns it on in the car settings; Android 6.0 and older are unsupported; Wi-Fi Direct has a firmware-dependent legacy Android 7.0–9 path with unverified requested frequency, and modern verified frequency on Android 10+ |
 | Phone | Standard, non-jailbroken iPhone with CarPlay enabled; device/iOS compatibility varies |
 | Physical evidence | Previous private builds: wired and wireless picture, touch and audio confirmed on the development car with iPhone XS / iOS 18.7.10 |
 | Other cars | Mixed community reports across DiLink generations; not a certified model support list |
@@ -15,6 +15,19 @@ This public preview is an independent receiver, not an Apple-certified CarPlay a
 ## BYD HUD and car hotspot
 
 See [BYD navigation](BYD_NAVIGATION.md) for the exact verified firmware and lifecycle limits. Earlier car-hotspot builds started CarPlay on the development car using scoped IPv6. Current access-point endpoints prefer usable IPv4 and retain scoped IPv6 fallback. The phone must join the configured car hotspot. Neither result guarantees support on every firmware.
+
+## Geely / Lynk & Co steering-wheel keys
+
+On the Geely/Lynk & Co head unit (`geely_fx11`, model `CS11_A4`, DesaySV, Android 11) the steering wheel does not produce standard `KEYCODE_MEDIA_*` events, so the media session and the accessibility path never see it. DiPlay detects this head unit and subscribes to the wheel's vendor key codes on the car's own input service (`com.geely.inputservice`), then forwards play/pause and skip to the active CarPlay session, and the microphone key's long press to Siri. The subscription exists only while a CarPlay session is active, and on every other head unit nothing is bound and behaviour is unchanged.
+
+Two limits come from the car, not from DiPlay:
+
+- The microphone key's long press is answered by the car's HiCar app, which registers for the same code. Disable it over ADB (`adb shell pm disable-user --user 0 com.geely.hicar`; `pm enable` undoes it) if Siri should answer instead. DiPlay never changes that itself, and a system update may need the command again. A short press stays the car's own voice assistant, which cannot be intercepted from an app.
+- This firmware opens the microphone only for the voice-communication audio source, so DiPlay uses it for Siri on this head unit. Voice-recognition input elsewhere is unchanged.
+
+When the car's own music app is playing as well, the wheel reaches both it and CarPlay: the head unit routes the key to its current audio source before any app sees it.
+
+Tested on the car named above; other Geely/Lynk firmware is untested.
 
 ## Android 9 Wi-Fi Direct and experimental features
 
@@ -41,6 +54,9 @@ The specifically observed 1280×480 DiLink 3 projection surface is now recognize
 - Some iOS/head-unit combinations do not visibly apply icon and text size. Reconnection is implemented; that does not guarantee the iPhone chooses the requested layout.
 - A radio that supports joining a 5 GHz network may still reject a 5 GHz Wi-Fi Direct group. The capability flag is diagnostic, not proof of group-owner support.
 - Automatic startup depends on the car's firmware and startup permissions.
+- Wireless CarPlay cannot start on a head unit that keeps calls and music on the maker's own Bluetooth module, because Android's Bluetooth there accepts connections that reach no phone. A common sign: the iPhone is paired in the maker's own Bluetooth or Phone app, not in Android's Bluetooth settings. Since 0.2.18 DiPlay tests for this and stops with the cause instead of retrying ([#590](https://github.com/shihabal3amri/DiPlay/pull/590)). Confirmed on one Allwinner T8 with TopWay firmware; [#330](https://github.com/shihabal3amri/DiPlay/issues/330) and [#354](https://github.com/shihabal3amri/DiPlay/issues/354) show the same symptom. USB is the only route left to try on such a unit.
+- Wireless CarPlay also cannot start on a head unit whose Bluetooth service gives apps no socket manager: every RFCOMM connect fails inside Android within a few milliseconds, while the car's own calls and music keep working. Seen on a Changan CS35 Plus with an Allwinner T7 on Android 9 ([#709](https://github.com/shihabal3amri/DiPlay/issues/709)). DiPlay stops with that cause instead of retrying. Use USB on such a unit.
+- A head unit whose Android has no Bluetooth adapter at all is told so, when the driver chooses an iPhone and when a connection is tried, instead of being asked to turn Bluetooth on. Where the adapter exists but its switch will not stay on, as on the GAC unit in [#581](https://github.com/shihabal3amri/DiPlay/issues/581), the request to turn Bluetooth on adds that this means wireless CarPlay cannot work there once the driver has been to Bluetooth settings and come back with it still off.
 - USB requires a data port and correct host/device-role behavior.
 - Calls, Siri, background reconnection, long journeys and future iOS releases need broader testing.
 

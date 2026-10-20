@@ -171,6 +171,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     private val endWindowLearning = Runnable { cancelKeyLearning() }
     private var page = "home"
     internal var ambientSupportCheck: (Context) -> java.util.concurrent.CompletableFuture<Boolean> = AmbientMusicController::checkSupport
+    internal var carRhythmSupportCheck: (Context) -> java.util.concurrent.CompletableFuture<Boolean> =
+        com.shilapi.xcertplay.hud.BydCarMusicRhythm::checkSupport
+    internal var selectedMtkDecoderName: (String) -> String? = com.shilapi.xcertplay.media.MtkDecoderTuning::selectedDecoderName
+    internal var updateInstallWorker: (Runnable) -> Unit = { Thread(it, "diplay-update-install").start() }
     private var settingsCategory = SettingsCategory.OVERVIEW
     private var connectionSettingsReturnCategory: SettingsCategory? = null
     private var setupStep = SetupGuide.STEP_CAR
@@ -1917,8 +1921,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             navigationOutputControl(card, VehicleAudioRole.MEDIA)
             val bufferPresets = com.shilapi.xcertplay.media.MediaAudioBuffer.presets
             choice(card, getString(R.string.music_buffer), listOf(getString(R.string.s_300_ms_default), getString(R.string.s_500_ms), getString(R.string.s_1000_ms_most_stable)),
-                bufferPresets.indexOf(AirPlayPersistence.loadMediaBufferMillis(this)).coerceAtLeast(0)) {
-                AirPlayPersistence.saveMediaBufferMillis(this, bufferPresets[it])
+                bufferPresets.indexOf(AirPlayPersistence.loadMediaBufferMillis(this, wireless = AirPlayPersistence.loadWirelessEnabled(this))).coerceAtLeast(0)) {
+                AirPlayPersistence.saveMediaBufferMillis(this, wireless = AirPlayPersistence.loadWirelessEnabled(this), millis = bufferPresets[it])
             }
         }
         filteredSection(content, SettingsSection.NAVIGATION_WHEEL,
@@ -2495,7 +2499,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                     { file ->
                         updateRelease = release
                         updateFile = file
-                        updateSavedPath = savedPath
+                        updateSavedPath = savedPath?.path
                         updateStage = UpdateStage.READY
                         render()
                     },
@@ -3670,7 +3674,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 WheelZoomSettings.Role.ZOOM_OUT, WheelZoomSettings.Role.NEXT -> R.string.wheel_key_role_next
                 WheelZoomSettings.Role.JOYSTICK -> R.string.wheel_key_role_joystick
                 WheelZoomSettings.Role.SELECT -> R.string.wheel_key_role_select
-                WheelZoomSettings.Role.SIRI -> null
+                WheelZoomSettings.Role.SIRI, WheelZoomSettings.Role.MEDIA_PLAY_PAUSE -> null
             }.takeIf { joystick }
             val names = listOfNotNull(zoomName, joystickName)
             if (names.isEmpty()) continue
@@ -3777,6 +3781,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         WheelZoomSettings.Role.NEXT -> R.string.wheel_key_role_next
         WheelZoomSettings.Role.SELECT -> R.string.wheel_key_role_select
         WheelZoomSettings.Role.SIRI -> R.string.wheel_key_role_siri
+        WheelZoomSettings.Role.MEDIA_PLAY_PAUSE -> R.string.wheel_key_role_media_play_pause
     }
 
     private class WindowKeyLearning(

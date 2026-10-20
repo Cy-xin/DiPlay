@@ -33,6 +33,10 @@
         <package android:name="com.geely.service.oneosapi" />
         <package android:name="com.byd.carsettings" />
         <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="content" android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+        <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.HOME" />
         </intent>
@@ -54,6 +58,10 @@
             android:windowSoftInputMode="adjustResize" />
         <service android:name="com.shilapi.xcertplay.SteeringProfileUploadService"
             android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <provider
+            android:name="com.shilapi.xcertplay.CrashRecordInstaller"
+            android:authorities="${applicationId}.crash-record"
+            android:exported="false" />
         <provider
             android:name="com.shilapi.xcertplay.DiagnosticReportProvider"
             android:authorities="${applicationId}.diagnostic-reports"

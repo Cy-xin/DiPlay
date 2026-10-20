@@ -15,11 +15,11 @@ android {
 
     defaultConfig {
         applicationId = "com.shihab.diplay"
-        minSdk = 25
+        minSdk = 24
         targetSdk = 37
-        // carlito | Fork installs must upgrade from code 39 while matching upstream's name.
-        versionCode = 42
-        versionName = "0.2.17"
+        // Keep Geely fork installs upgradeable while tracking the upstream release name.
+        versionCode = 43
+        versionName = "0.2.21"
 
     }
 
