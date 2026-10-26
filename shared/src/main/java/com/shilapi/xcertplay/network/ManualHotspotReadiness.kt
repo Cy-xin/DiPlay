@@ -46,9 +46,17 @@ internal fun selectHotspotInterface(snapshot: HotspotNetworkSnapshot, log: (Stri
                     !host.isMulticastAddress && !host.isLinkLocalAddress ||
                     host is Inet6Address && host.isLinkLocalAddress && host.scopeId == iface.index)
         }
-        // carlito | Match the working APK's IPv4-first policy before checking AP ownership.
-        // Factory subnets such as 198.18/15 must not disappear from the candidate list.
-        val address = vendorAddress ?: wirelessHostAddress(iface.addresses, iface.index)
+        val hotspotAddress = wirelessHostAddress(iface.addresses.filter {
+            it is Inet6Address && it.isLinkLocalAddress || publishesHotspotAddress(it)
+        }, iface.index)
+        // A vendor AP interface may publish a non-private subnet: the reference head unit hands out
+        // 198.18.34.x on its eth0.3 VLAN (#573), which isSiteLocalAddress() rejects. The wider rule
+        // applies only to an interface already named as the hotspot; an ordinary station interface
+        // still has to publish a private address before it may stand in for one.
+        // carlito | A verified factory host route keeps the working APK's IPv4-first address.
+        val address = vendorAddress ?: if (owned) hotspotAddress else hotspotAddress?.takeIf {
+            it !is Inet4Address || it.isSiteLocalAddress
+        }
         val reason = when {
             !iface.up || iface.index <= 0 -> "interface_down"
             address == null -> "address_unavailable"

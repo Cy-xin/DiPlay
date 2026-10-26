@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged Geely 0.2.16 translations retained by the 0.2.21 sync. -->
+<resources>
+    <string name="settings_vehicle_map_experimental">Vehicle map (experimental)</string>
+</resources>

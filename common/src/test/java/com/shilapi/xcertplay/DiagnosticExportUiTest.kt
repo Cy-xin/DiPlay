@@ -50,7 +50,8 @@ class DiagnosticExportUiTest {
         try {
             assertFalse(SteeringProfiles.developerUnlocked(activity))
             if (developer) {
-                ReflectionHelpers.setField(activity, "page", "about")
+                ReflectionHelpers.setField(activity, "page", "settings")
+                ReflectionHelpers.setField(activity, "settingsCategory", SettingsCategory.ABOUT)
                 ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
                 repeat(7) {
                     descendants(activity.window.decorView).filterIsInstance<TextView>()
