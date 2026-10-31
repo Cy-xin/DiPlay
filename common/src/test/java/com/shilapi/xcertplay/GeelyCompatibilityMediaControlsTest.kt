@@ -93,4 +93,16 @@ class GeelyCompatibilityMediaControlsTest {
         assertFalse(GeelyCompatibilityMediaControls.resolveTrampoline("com.shihab.diplay", main, openPlay))
         assertFalse(GeelyCompatibilityMediaControls.resolveTrampoline("io.dushu.car.hudtest", main, openPlay))
     }
+
+    @Test
+    fun `a play press served by a live session does not open the app window`() {
+        // Opening DiPlayActivity here covers the running projection and then drops back, which is
+        // the display visibly jumping away and returning on every card press.
+        assertFalse(GeelyCompatibilityMediaControls.opensAppWindow(playServed = true))
+    }
+
+    @Test
+    fun `a play press with no session opens the app so the phone can be connected`() {
+        assertTrue(GeelyCompatibilityMediaControls.opensAppWindow(playServed = false))
+    }
 }

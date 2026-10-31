@@ -69,15 +69,25 @@ internal object GeelyCompatibilityMediaControls {
      * MAIN + OPEN_PLAY instead, so the press has to become a play request here.
      *
      * The intent also carries OEM book IDs and a position. Those are echoes of what this app
-     * published, not iPhone library identifiers, so they are ignored: the app opens normally and
-     * only playback itself is requested.
+     * published, not iPhone library identifiers, so they are ignored.
      */
     fun openFromFactory(context: Context, intent: Intent) {
         val type = runCatching { intent.getStringExtra(INTENT_TYPE) }.getOrNull()
         if (!resolveTrampoline(context.packageName, intent.action, type)) return
-        CarPlayMediaKeys.onGeelyCardPlayRequest()
-        launch(context)
+        if (opensAppWindow(CarPlayMediaKeys.onGeelyCardPlayRequest())) launch(context)
     }
+
+    /**
+     * Whether the trampoline should also bring the app's own window forward.
+     *
+     * While CarPlay is connected the app is already projecting full-screen behind the card, so
+     * starting DiPlayActivity covers the projection and then drops back once the window is
+     * replaced — on screen that reads as the display jumping away and returning on every press.
+     * The press is a transport control, so it is served without a window. Only when there is no
+     * session to play through does the window do something useful: it is where the phone gets
+     * connected.
+     */
+    fun opensAppWindow(playServed: Boolean): Boolean = !playServed
 
     /**
      * @return true when the launch was handed to the system. This vehicle's firmware silently

@@ -835,12 +835,17 @@ internal object CarPlayMediaKeys {
      * The OEM card's play button. This vehicle never broadcasts PLAY: it starts the trampoline with
      * OPEN_PLAY instead, so the press has to become a play request here. A press that lands before
      * CarPlay connects is kept briefly and replayed once, rather than being dropped silently.
+     *
+     * @return true when there was a live session to play through, so the press is already served
+     * and showing the app window would only cover the projection.
      */
-    internal fun onGeelyCardPlayRequest() {
+    internal fun onGeelyCardPlayRequest(): Boolean {
         val connected = synchronized(this) {
             if (controller == null) { pendingPlayAt = SystemClock.elapsedRealtime(); false } else true
         }
-        if (connected) send(CarPlayMediaButton.PLAY, "geely-wheel")
+        if (!connected) return false
+        send(CarPlayMediaButton.PLAY, "geely-wheel")
+        return true
     }
 
     /** The steering-wheel microphone key captured outside the Android key stream (Geely/Lynk). */
