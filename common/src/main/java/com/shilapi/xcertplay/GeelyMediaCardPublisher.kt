@@ -69,6 +69,20 @@ internal class GeelyMediaCardPublisher(
         }
     }
 
+    /**
+     * Answers an OEM position query without inventing state this app does not hold.
+     * Does nothing unless the card currently owns the source, so a query arriving before
+     * CarPlay connects is left unanswered instead of faking an online player.
+     */
+    @Synchronized
+    fun publishNow() {
+        if (closed || failed || !active) return
+        // The vehicle queries every visible display, so several queries can arrive together.
+        if (SystemClock.elapsedRealtime() - lastPublishedAt < MIN_REPLY_INTERVAL_MILLIS) return
+        handler.removeCallbacks(heartbeat)
+        if (publish(nowPlaying.playing)) handler.postDelayed(heartbeat, INTERVAL_MILLIS)
+    }
+
     private fun publish(playing: Boolean, announceSource: Boolean = true): Boolean {
         val title = nowPlaying.title?.takeIf(String::isNotBlank) ?: "CarPlay"
         val artist = nowPlaying.artist?.takeIf(String::isNotBlank) ?: "iPhone"
@@ -117,5 +131,7 @@ internal class GeelyMediaCardPublisher(
         const val ACTION = "ecarx.intent.broadcast.action.MEDIA_CONTROL_RECEIVER"
         val RECEIVER = ComponentName(PACKAGE, "com.media.control.MediaControlReceiver")
         private const val INTERVAL_MILLIS = 2_000L
+        // The vehicle asks about every visible display at once; answer at most this often.
+        private const val MIN_REPLY_INTERVAL_MILLIS = 250L
     }
 }

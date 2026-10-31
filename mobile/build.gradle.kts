@@ -7,6 +7,17 @@ plugins {
 val localAuthenticationAssets = providers.environmentVariable("DIPLAY_AUTH_ASSETS_DIR")
     .orNull?.let { file(it).canonicalFile }
 
+/**
+ * Opt-in Geely/OneOS compatibility build: `-Pdiplay.geelyOemCompatibility=true`.
+ *
+ * This vehicle's launcher only lists the media-card package `io.dushu.car`, and its
+ * OnlineMusicService addresses fixed component names inside that package. Selecting this build
+ * renames the installed package and enables exactly the two components it calls. It is a separate
+ * install, not a replacement: the ordinary com.shihab.diplay package is left untouched.
+ */
+val geelyOemCompatibility = providers.gradleProperty("diplay.geelyOemCompatibility")
+    .map(String::toBoolean).getOrElse(false)
+
 android {
     namespace = "com.shilapi.xcertplay"
     compileSdk {
@@ -14,12 +25,13 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.shihab.diplay"
+        applicationId = if (geelyOemCompatibility) "io.dushu.car" else "com.shihab.diplay"
         minSdk = 24
         targetSdk = 37
         // carlito | Fork installs must upgrade from Geely 0.2.16 (code 41) while matching upstream's name.
         versionCode = 43
-        versionName = "0.2.21"
+        versionName = if (geelyOemCompatibility) "0.2.21-geely" else "0.2.21"
+        manifestPlaceholders["geelyOemCompatEnabled"] = geelyOemCompatibility.toString()
     }
 
 
@@ -39,7 +51,9 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".hudtest"
+            // The compatibility package must install as exactly io.dushu.car: this vehicle's
+            // allow-list has no .hudtest entry, so the suffix would produce an inert package.
+            if (!geelyOemCompatibility) applicationIdSuffix = ".hudtest"
             versionNameSuffix = "-hud-test"
         }
         release {

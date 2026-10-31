@@ -43,6 +43,9 @@ internal object CarPlayMediaKeys {
     private const val TAG = "DiPlay-MediaKeys"
     private const val ACTIONS = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
         PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+    // A play press from the OEM card stays valid only while the user still expects sound from it.
+    private const val PENDING_PLAY_WINDOW_MILLIS = 30_000L
+    private const val PENDING_PLAY_DELAY_MILLIS = 700L
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val artworkQueue = NowPlayingArtworkQueue(
@@ -107,6 +110,8 @@ internal object CarPlayMediaKeys {
     private var speechPlaying = false
     private var resumeAfterSpeech = false
     private var speechMedia: CarPlayNowPlaying? = null
+    // The OEM card's play button runs the trampoline before CarPlay may have finished connecting.
+    private var pendingPlayAt = 0L
     private var nowPlaying = CarPlayNowPlaying()
     private var elapsedUpdatedAt = 0L
     private var artwork: Bitmap? = null
@@ -138,6 +143,12 @@ internal object CarPlayMediaKeys {
         val retained = next.nowPlayingSnapshot()
         onNowPlayingChanged(next)
         next.matchingArtworkSnapshot(retained.artworkTransferId)?.let { onArtworkChanged(next, it.id, it.bytes) }
+        // Honour a play press that arrived while this connection was still being established.
+        val requestedAt = pendingPlayAt
+        pendingPlayAt = 0L
+        if (requestedAt != 0L && SystemClock.elapsedRealtime() - requestedAt <= PENDING_PLAY_WINDOW_MILLIS) {
+            mainHandler.postDelayed({ send(CarPlayMediaButton.PLAY, "geely-wheel") }, PENDING_PLAY_DELAY_MILLIS)
+        }
     }
 
     /** Ends key handling for [expected]; a newer controller's state is left alone. */
@@ -781,8 +792,14 @@ internal object CarPlayMediaKeys {
         )
     }
 
+    /**
+     * Sources are distinct key-stream owners. The 120 ms de-duplication below only fires when the
+     * same button arrives from a *different* owner, so an owner missing from this list would be
+     * folded into "media_session" and its duplicate press would be forwarded a second time.
+     */
     private fun send(index: Int, source: String) {
-        val group = if (source in listOf("oneos", "ecarx", "vehicle_bridge", "logcat", "broadcast")) source else "media_session"
+        val group = if (source in listOf("oneos", "ecarx", "vehicle_bridge", "logcat", "broadcast", "geely-wheel"))
+            source else "media_session"
         val now = SystemClock.elapsedRealtime()
         synchronized(this) {
             if (learning != null || now < suppressedUntil) return
@@ -802,8 +819,29 @@ internal object CarPlayMediaKeys {
         WheelKeyLog.note("media key $source -> CarPlay $index sent=$sent")
     }
 
+    /** Reuse the normal retained-metadata path for the OEM card's position query. */
+    internal fun requestGeelyMediaCardUpdate() {
+        val expected = synchronized(this) { controller } ?: return
+        onNowPlayingChanged(expected)
+        mainHandler.post { synchronized(this) {
+            if (controller === expected) geelyMediaCard?.publishNow()
+        } }
+    }
+
     /** A steering-wheel media key captured outside the Android key stream (Geely/Lynk). */
     internal fun onExternalMediaKey(index: Int) = send(index, "geely-wheel")
+
+    /**
+     * The OEM card's play button. This vehicle never broadcasts PLAY: it starts the trampoline with
+     * OPEN_PLAY instead, so the press has to become a play request here. A press that lands before
+     * CarPlay connects is kept briefly and replayed once, rather than being dropped silently.
+     */
+    internal fun onGeelyCardPlayRequest() {
+        val connected = synchronized(this) {
+            if (controller == null) { pendingPlayAt = SystemClock.elapsedRealtime(); false } else true
+        }
+        if (connected) send(CarPlayMediaButton.PLAY, "geely-wheel")
+    }
 
     /** The steering-wheel microphone key captured outside the Android key stream (Geely/Lynk). */
     internal fun onExternalSiriKey(): Boolean {

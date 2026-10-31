@@ -39,6 +39,23 @@
 
         <service android:name="com.shilapi.xcertplay.shared.MyCarAppService" tools:node="remove" />
         <meta-data android:name="androidx.car.app.minCarApiLevel" tools:node="remove" />
+
+        <!-- Geely/OneOS compatibility build only. This vehicle's OnlineMusicService addresses
+             these two component names inside io.dushu.car: a broadcast receiver for media keys and
+             a trampoline activity for the card's play button. Both stay disabled in the ordinary
+             com.shihab.diplay install so no extra entry point is exposed there. -->
+        <receiver
+            android:name="io.dushu.car.receiver.MediaControlReceiver"
+            android:enabled="${geelyOemCompatEnabled}"
+            android:exported="true" />
+
+        <activity
+            android:name="io.dushu.car.mvp.view.TransparentActivity"
+            android:enabled="${geelyOemCompatEnabled}"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 
 </manifest>

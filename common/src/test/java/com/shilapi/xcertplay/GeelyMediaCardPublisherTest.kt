@@ -101,4 +101,50 @@ class GeelyMediaCardPublisherTest {
         assertEquals("PUBLISH_FAILED:SecurityException", output.stage)
         verify(context, times(1)).sendBroadcast(any())
     }
+
+    @Test fun positionQueryIsAnsweredWithAFullStateAndSourceAnnouncement() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        output.update(true, track)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        val before = songs.size
+        output.publishNow()
+        assertEquals(before + 1, songs.size)
+        // The vehicle decides the source is gone when the announcement stops, so every answer
+        // carries it rather than only the periodic heartbeat.
+        assertTrue(broadcasts.last().getBooleanExtra("RECEIVER_MEDIA_APP_STATUS", false))
+        assertEquals(3, songs.last().getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1))
+    }
+
+    @Test fun positionQueryBeforeOwningTheSourceIsNotAnswered() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        // Never updated: CarPlay is not connected and this app has no state to report. Answering
+        // here would claim an online player that cannot play anything.
+        output.publishNow()
+        assertTrue(broadcasts.isEmpty())
+        assertEquals("IDLE", output.stage)
+    }
+
+    @Test fun repeatedQueriesWithinOneDisplayBurstCollapseToOneAnswer() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        output.update(true, track)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        val before = songs.size
+        // The vehicle asks about every visible display at once.
+        repeat(5) { output.publishNow() }
+        assertEquals(before + 1, songs.size)
+        // ...and a later burst is answered again.
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        output.publishNow()
+        assertEquals(before + 2, songs.size)
+    }
+
+    @Test fun closingTheSourceSilencesFurtherQueries() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        output.update(true, track)
+        output.update(false, track)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        val count = broadcasts.size
+        output.publishNow()
+        assertEquals(count, broadcasts.size)
+    }
 }
