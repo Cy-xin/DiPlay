@@ -60,11 +60,14 @@ internal object CarPlayMediaKeys {
     private var initialAlbumRecovery = InitialAlbumRecovery()
     private var initialAlbumRetry: Runnable? = null
     private var session: MediaSession? = null
+    private var geelyMediaCard: GeelyMediaCardPublisher? = null
+    private var lastGeelyMediaCardStage = "IDLE"
     private var focusRequest: AudioFocusRequestCompat? = null
     private var focusOwner: Any? = null
     private var focusEventRevision = 0L
     private var focusHeld = false
     private var manageAudioFocus = true
+    private var sinkOwnsAudio = false
     /** Some car firmware never sends a gain callback after the phone call ends. */
     private var transientFocusInterrupted = false
     private var appContext: Context? = null
@@ -118,6 +121,7 @@ internal object CarPlayMediaKeys {
             artworkOwner = artworkQueue.newSession()
         }
         appContext = context.applicationContext
+        if (geelyMediaCard == null) geelyMediaCard = GeelyMediaCardPublisher(context)
         controller = next
         this.manageAudioFocus = manageAudioFocus
         steeringProfile = SteeringProfiles.loadEnabled(context)
@@ -150,8 +154,19 @@ internal object CarPlayMediaKeys {
     }
 
     /** Called when CarPlay music starts or stops; may run on any thread. */
-    fun onMediaAudioChanged(active: Boolean) {
-        mainHandler.post { synchronized(this) { updateLocked(active) } }
+    fun onMediaAudioChanged(expected: CarPlayController, active: Boolean) {
+        mainHandler.post { synchronized(this) {
+            if (controller === expected) updateLocked(active)
+        } }
+    }
+
+    /** The renderer owns focus on factory-routing head units such as KX11_A2. */
+    fun onAudioOwnershipChanged(expected: CarPlayController, owned: Boolean) {
+        mainHandler.post { synchronized(this) {
+            if (controller !== expected) return@synchronized
+            sinkOwnsAudio = owned
+            publishGeelyMediaCardLocked()
+        } }
     }
 
     fun onSpeechPlayback(expected: CarPlayController, active: Boolean) {
@@ -442,6 +457,7 @@ internal object CarPlayMediaKeys {
     fun steeringDiagnostics(): String = synchronized(this) {
         val permitted = appContext?.checkSelfPermission(android.Manifest.permission.READ_LOGS) == android.content.pm.PackageManager.PERMISSION_GRANTED
         "systemLogAccess=$permitted\n" + SteeringLogAccess.diagnostics() + "\n" +
+            "geelyMediaCard=${geelyMediaCard?.stage ?: lastGeelyMediaCardStage}\n" +
             (bridgeInput?.diagnostics() ?: "last: $lastGeelyInputDiagnostics") + "\n" +
             (keyLogMonitor?.diagnostics() ?: "last: $lastKeyLogDiagnostics") + "\n" + observedKeys.joinToString("\n")
     }
@@ -603,6 +619,7 @@ internal object CarPlayMediaKeys {
             transientFocusInterrupted = false
             forwardGrantedFocusLocked()
         }
+        publishGeelyMediaCardLocked()
         Log.i(TAG, "audio focus regained=$focusHeld")
     }
 
@@ -682,6 +699,7 @@ internal object CarPlayMediaKeys {
                         transientFocusInterrupted = false
                     }
                 }
+                publishGeelyMediaCardLocked()
                 true
             }
         }
@@ -695,6 +713,8 @@ internal object CarPlayMediaKeys {
     }
 
     private fun releaseLocked() {
+        geelyMediaCard?.let { it.close(); lastGeelyMediaCardStage = it.stage }
+        geelyMediaCard = null
         endBridgeZoom(); mainHandler.removeCallbacks(zoomPoll)
         instrumentStatus?.close(); instrumentStatus = null; bridgeZoomKeys = emptyMap()
         steeringGeneration++
@@ -718,6 +738,7 @@ internal object CarPlayMediaKeys {
         }
         session = null
         mediaAudioActive = false
+        sinkOwnsAudio = false
         speechPlaying = false; resumeAfterSpeech = false; speechMedia = null
         nowPlaying = CarPlayNowPlaying()
         artwork = null
@@ -730,7 +751,16 @@ internal object CarPlayMediaKeys {
         transientFocusInterrupted = false
     }
 
+    private fun publishGeelyMediaCardLocked() {
+        val ownsSource = controller != null && session?.isActive == true &&
+            (if (manageAudioFocus && focusRequest != null) focusHeld && !transientFocusInterrupted else sinkOwnsAudio)
+        geelyMediaCard?.update(ownsSource, nowPlaying.copy(
+            playing = if (nowPlaying.elapsedMillis != null || nowPlaying.title != null) nowPlaying.playing else mediaAudioActive,
+        ))
+    }
+
     private fun publishPlaybackStateLocked() {
+        publishGeelyMediaCardLocked()
         val playing = if (nowPlaying.elapsedMillis != null || nowPlaying.title != null) {
             nowPlaying.playing
         } else {

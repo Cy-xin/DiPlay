@@ -6,10 +6,11 @@ import android.content.Context
 internal object StartupDiagnosticSnapshot {
     private const val PREFS = "diplay_startup_diagnostics"
 
-    fun received(context: Context, launchEnabled: Boolean) {
+    fun received(context: Context, launchEnabled: Boolean, packageReplaced: Boolean = false) {
         runCatching {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putLong("receivedAt", System.currentTimeMillis())
+                .putString("event", if (packageReplaced) "package-replaced" else "boot")
                 .putBoolean("launchEnabled", launchEnabled)
                 .putString("launchResult", if (launchEnabled) "pending" else "disabled")
                 .remove("failureClass").apply()
@@ -34,7 +35,8 @@ internal object StartupDiagnosticSnapshot {
             "Boot diagnostics received=true receivedAtEpochMs=$receivedAt " +
                 "launchEnabledAtBoot=${prefs.getBoolean("launchEnabled", false)} " +
                 "launchResult=${prefs.getString("launchResult", "unknown")} " +
-                "failureClass=${prefs.getString("failureClass", "none") ?: "none"}; " +
+                "failureClass=${prefs.getString("failureClass", "none") ?: "none"} " +
+                "event=${prefs.getString("event", "boot")}; " +
                 "startActivity-returned does not prove the OEM displayed the app."
         }
     }.getOrDefault("Boot diagnostics unavailable.")

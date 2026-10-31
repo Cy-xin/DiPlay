@@ -72,3 +72,7 @@
 - Unknown values, readings older than three seconds, and gear changes clear queued samples. Motion reads use fresh VHAL responses, direct ECARX calls or a bounded sensor cache; no missing gear is replaced with D.
 - This remains compile/source reviewed, not vehicle verified. One-second property polling is supplementary vehicle-speed input, not a claim of full inertial navigation support.
 The bridge motion switch takes priority if both bridge and BYD speed sources are enabled; its default is off and it does not silently fall back to a different vehicle source.
+
+## OneOS 音乐与启动适配
+
+音乐卡上报、自动连接改动及实车验证边界见 [吉利音乐信息与自动连接适配](GEELY_MEDIA_AND_STARTUP.md)。

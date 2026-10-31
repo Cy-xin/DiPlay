@@ -473,8 +473,27 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 startCarHotspotOnLaunch()
             }
             handler.post { connect(true) }
+        } else if (consumeBootAutoConnectIntent(intent)) {
+            // Boot/update can return to an existing home activity, whose initial launch has
+            // already run. Honour the same two opt-ins without resetting or ending a session.
+            initialLaunch = false
+            startCarHotspotOnLaunch()
+            handler.post {
+                // Another startup path or a user action may have changed the decision while
+                // this request waited in the UI queue. Never replace that newer session.
+                if (canConnectAfterAutomaticStart()) connect(DiPlayPreferences.autoConnectWireless(this))
+            }
         }
     }
+    private fun consumeBootAutoConnectIntent(intent: Intent): Boolean {
+        val requested = intent.getBooleanExtra(BootReceiver.EXTRA_AUTOMATIC_START, false)
+        intent.removeExtra(BootReceiver.EXTRA_AUTOMATIC_START)
+        return requested && !intent.hasExtra("page") && canConnectAfterAutomaticStart()
+    }
+    private fun canConnectAfterAutomaticStart(): Boolean =
+        !isFinishing && !isDestroyed && AirPlayPersistence.loadAutoStartOnBoot(this) &&
+            DiPlayPreferences.autoConnect(this) && page != "settings" && page != "setup" &&
+            setupError == null && !CarPlayBackgroundSession.hasSession()
     private fun consumeBluetoothAutoConnectIntent(intent: Intent): Boolean {
         val requested = intent.getBooleanExtra(PhoneBluetoothReceiver.EXTRA_AUTO_CONNECT, false)
         intent.removeExtra(PhoneBluetoothReceiver.EXTRA_AUTO_CONNECT)

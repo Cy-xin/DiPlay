@@ -5297,7 +5297,6 @@ class CarPlayHostActivity : ComponentActivity() {
                     diagnosticLog?.append(formattedLogLine(message, System.currentTimeMillis()))
                 }
             },
-            onMediaAudioChanged = CarPlayMediaKeys::onMediaAudioChanged,
             wirelessAudio = wirelessEnabled,
             callEchoCancellation = AirPlayPersistence.loadCallEchoCancellation(this),
             callVoiceFilter = AirPlayPersistence.loadCallVoiceFilter(this),
@@ -5506,7 +5505,10 @@ class CarPlayHostActivity : ComponentActivity() {
         controller = snapshot.controller
         updateClusterMapShown()
         sink = snapshot.sink
-        snapshot.sink.setAudioOwnershipChangedListener(snapshot.controller::setBluetoothAudioOwnership)
+        snapshot.sink.setAudioOwnershipChangedListener { owned ->
+            snapshot.controller.setBluetoothAudioOwnership(owned)
+            CarPlayMediaKeys.onAudioOwnershipChanged(snapshot.controller, owned)
+        }
         sessionDisplay = snapshot.display
         resetSidePanel()
         if (snapshot.display.viewAreas?.let { it.kindOf(it.current) == CarPlayViewAreas.Kind.SIDE_PANEL } == true) {
@@ -5663,7 +5665,11 @@ class CarPlayHostActivity : ComponentActivity() {
             },
         )
         controller = next
-        renderer.setAudioOwnershipChangedListener(next::setBluetoothAudioOwnership)
+        renderer.setMediaAudioChangedListener { active -> CarPlayMediaKeys.onMediaAudioChanged(next, active) }
+        renderer.setAudioOwnershipChangedListener { owned ->
+            next.setBluetoothAudioOwnership(owned)
+            CarPlayMediaKeys.onAudioOwnershipChanged(next, owned)
+        }
         resetSidePanel() // a new session starts without the side panel
         updateClusterMapShown()
         next.setHudNavigationListener(GeelyHudProjection::update)

@@ -69,7 +69,7 @@ class AndroidMediaSink(
     private val mediaBufferMillis: Int = MediaAudioBuffer.DEFAULT_MILLIS,
     private val onAudioDiagnostic: (String) -> Unit = {},
     /** True while any music ("media") audio stream is running; called from media threads. */
-    private val onMediaAudioChanged: (Boolean) -> Unit = {},
+    onMediaAudioChanged: (Boolean) -> Unit = {},
     private val wirelessAudio: Boolean = false,
     private val videoFps: Int = 60,
     private val navigationOutputDevice: AudioOutputDevice? = null,
@@ -108,6 +108,11 @@ class AndroidMediaSink(
     private val audioManager = appContext?.getSystemService(AudioManager::class.java)
     @Volatile private var audioOwnershipListener: ((Boolean) -> Unit)? = onAudioOwnershipChanged
     @Volatile private var ownsAudio = false
+    @Volatile private var mediaAudioListener: (Boolean) -> Unit = onMediaAudioChanged
+    /** Bind audio activity to the controller that owns this sink, rather than a global session. */
+    fun setMediaAudioChangedListener(listener: (Boolean) -> Unit) {
+        mediaAudioListener = listener
+    }
     // carlito | Rebind the live controller when an Activity adopts a background session.
     fun setAudioOwnershipChangedListener(listener: ((Boolean) -> Unit)?) {
         audioOwnershipListener = listener
@@ -479,7 +484,7 @@ class AndroidMediaSink(
         if (before != after) {
             // carlito | Actual stream transitions also work when the phone omits Now Playing metadata.
             audioFocusCoordinator.onMediaPlaying(after)
-            onMediaAudioChanged(after)
+            mediaAudioListener(after)
         }
     }
 
@@ -719,7 +724,7 @@ class AndroidMediaSink(
         synchronized(telephonyAudioTypes) { telephonyAudioTypes.clear() }
         callEchoReferences.clear()
         val hadMedia = synchronized(mediaAudioTypes) { mediaAudioTypes.isNotEmpty().also { mediaAudioTypes.clear() } }
-        if (hadMedia) onMediaAudioChanged(false)
+        if (hadMedia) mediaAudioListener(false)
         pendingMicrophones.clear()
         synchronized(captureLock) {
             try { microphoneUplinks.values.forEach { it.uplink.close() }; microphoneUplinks.clear() }

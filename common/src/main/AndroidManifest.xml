@@ -29,6 +29,8 @@
         <package android:name="com.autolink.carplay" />
         <package android:name="com.autolink.carplay.app" />
         <package android:name="com.geely.service.oneosapi" />
+        <!-- OneOS music cards use an explicit firmware receiver, separate from MediaSession. -->
+        <package android:name="com.geely.online.service" />
         <package android:name="com.byd.carsettings" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -184,6 +186,7 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

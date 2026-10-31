@@ -12,6 +12,7 @@ import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mockito.mock
@@ -53,7 +54,7 @@ class CarPlayMediaFocusDisabledTest {
         val controller = mock(CarPlayController::class.java).also(controllers::add)
         val session = start(controller)
 
-        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
         shadowOf(Looper.getMainLooper()).idle()
 
         assertSame(session, currentSession())
@@ -85,10 +86,61 @@ class CarPlayMediaFocusDisabledTest {
         assertFocusDisabled()
     }
 
+    @Test fun factoryRendererMustConfirmOwnershipBeforeClaimingTheOemSource() {
+        val controller = mock(CarPlayController::class.java).also(controllers::add)
+        start(controller)
+        ReflectionHelpers.getField<GeelyMediaCardPublisher>(CarPlayMediaKeys, "geelyMediaCard").close()
+        ReflectionHelpers.setField(CarPlayMediaKeys, "geelyMediaCard", GeelyMediaCardPublisher(app) { true })
+        fun packets() = shadowOf(app).broadcastIntents.filter { it.action == GeelyMediaCardPublisher.ACTION }
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(4))
+        assertTrue(packets().isEmpty())
+
+        CarPlayMediaKeys.onAudioOwnershipChanged(controller, true)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(packets().last().getBooleanExtra("RECEIVER_MEDIA_APP_STATUS", false))
+        CarPlayMediaKeys.onAudioOwnershipChanged(controller, false)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(2, packets().last().getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1))
+        val count = packets().size
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6))
+        assertEquals(count, packets().size)
+    }
+
+    @Test fun queuedOldSinkActivityAndOwnershipCannotClaimOrClearTheReplacementSource() {
+        val first = mock(CarPlayController::class.java).also(controllers::add)
+        start(first)
+        CarPlayMediaKeys.onMediaAudioChanged(first, true)
+        CarPlayMediaKeys.onAudioOwnershipChanged(first, true)
+        val second = mock(CarPlayController::class.java).also(controllers::add)
+        `when`(second.nowPlayingSnapshot()).thenReturn(CarPlayNowPlaying())
+        CarPlayMediaKeys.attach(app, second)
+        ReflectionHelpers.getField<GeelyMediaCardPublisher>(CarPlayMediaKeys, "geelyMediaCard").close()
+        ReflectionHelpers.setField(CarPlayMediaKeys, "geelyMediaCard", GeelyMediaCardPublisher(app) { true })
+        shadowOf(Looper.getMainLooper()).idle()
+        assertNull(currentSession())
+        fun packets() = shadowOf(app).broadcastIntents.filter { it.action == GeelyMediaCardPublisher.ACTION }
+        assertTrue(packets().isEmpty())
+
+        CarPlayMediaKeys.onMediaAudioChanged(second, true)
+        CarPlayMediaKeys.onAudioOwnershipChanged(second, true)
+        shadowOf(Looper.getMainLooper()).idle()
+        val count = packets().size
+        CarPlayMediaKeys.onMediaAudioChanged(first, false)
+        CarPlayMediaKeys.onAudioOwnershipChanged(first, false)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(ReflectionHelpers.getField(CarPlayMediaKeys, "mediaAudioActive"))
+        assertTrue(ReflectionHelpers.getField(CarPlayMediaKeys, "sinkOwnsAudio"))
+        assertEquals(count, packets().size)
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(2))
+        assertTrue(packets().size > count)
+        assertTrue(packets().last().getBooleanExtra("RECEIVER_MEDIA_APP_STATUS", false))
+    }
+
     private fun start(controller: CarPlayController): MediaSession {
         `when`(controller.nowPlayingSnapshot()).thenReturn(CarPlayNowPlaying())
         CarPlayMediaKeys.attach(app, controller)
-        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
         shadowOf(Looper.getMainLooper()).idle()
         assertFocusDisabled()
         return currentSession().also(::assertNotNull)!!

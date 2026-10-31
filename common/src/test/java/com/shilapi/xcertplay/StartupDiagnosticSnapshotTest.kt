@@ -40,6 +40,7 @@ class StartupDiagnosticSnapshotTest {
         BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
         assertEquals(DiPlayActivity::class.java.name, launch!!.component!!.className)
         assertTrue(launch!!.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+        assertTrue(launch!!.getBooleanExtra(BootReceiver.EXTRA_AUTOMATIC_START, false))
         assertTrue(StartupDiagnosticSnapshot.report(app).contains("launchResult=startActivity-returned"))
     }
 
@@ -56,6 +57,21 @@ class StartupDiagnosticSnapshotTest {
         AirPlayPersistence.saveAutoStartOnBoot(app, false)
         BootReceiver().onReceive(context, Intent(Intent.ACTION_BOOT_COMPLETED))
         assertTrue(StartupDiagnosticSnapshot.report(app).contains("launchResult=disabled failureClass=none"))
+    }
+
+    @Test fun updateRestartUsesTheExistingOptInAndDoesNotEnableAutomaticConnection() {
+        val launches = mutableListOf<Intent>()
+        val context = object : ContextWrapper(app) {
+            override fun startActivity(intent: Intent) { launches += intent }
+        }
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
+        assertTrue(launches.isEmpty())
+        AirPlayPersistence.saveAutoStartOnBoot(app, true)
+        BootReceiver().onReceive(context, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
+        assertEquals(1, launches.size)
+        assertTrue(launches.single().getBooleanExtra(BootReceiver.EXTRA_AUTOMATIC_START, false))
+        assertFalse(DiPlayPreferences.autoConnect(app))
+        assertTrue(StartupDiagnosticSnapshot.report(app).contains("event=package-replaced"))
     }
 
     @Test fun unrelatedBroadcastsDoNotCreateOrOverwriteBootEvidence() {

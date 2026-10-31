@@ -77,6 +77,102 @@ class DefaultConnectionModeTest {
         controller.pause().stop().destroy()
     }
 
+    @Test fun automaticStartDeliveredToExistingHomeHonoursBothOptInsAndConfiguredTransport() {
+        app.getSharedPreferences("diplay", 0).edit().putBoolean("notification_asked", true).commit()
+        DiPlayPreferences.savePhone(app, "00:11:22:33:44:55", "Test iPhone")
+        DiPlayPreferences.saveDefaultConnectionMode(app, DefaultConnectionMode.USB)
+        AirPlayPersistence.saveWirelessEnabled(app, true)
+        AirPlayPersistence.saveWirelessHotspotMode(app, WirelessHotspotMode.WIFI_P2P)
+        val controller = Robolectric.buildActivity(DiPlayActivity::class.java, Intent(Intent.ACTION_MAIN)).create()
+        val activity = controller.get()
+        ReflectionHelpers.setField(activity, "setupError", null)
+        controller.start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        fun deliver(intent: Intent) {
+            ReflectionHelpers.callInstanceMethod<Unit>(activity, "onNewIntent",
+                ReflectionHelpers.ClassParameter(Intent::class.java, intent))
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        fun automatic() = Intent().putExtra(BootReceiver.EXTRA_AUTOMATIC_START, true)
+        try {
+            DiPlayPreferences.saveAutoConnect(app, true)
+            deliver(automatic())
+            assertNull(shadowOf(activity).nextStartedActivity)
+            DiPlayPreferences.saveAutoConnect(app, false)
+            AirPlayPersistence.saveAutoStartOnBoot(app, true)
+            val disabled = automatic()
+            deliver(disabled)
+            assertFalse(disabled.hasExtra(BootReceiver.EXTRA_AUTOMATIC_START))
+            assertNull(shadowOf(activity).nextStartedActivity)
+            assertTrue(AirPlayPersistence.loadWirelessEnabled(app))
+
+            DiPlayPreferences.saveAutoConnect(app, true)
+            deliver(automatic().putExtra("page", "settings"))
+            assertNull(shadowOf(activity).nextStartedActivity)
+            assertTrue(AirPlayPersistence.loadWirelessEnabled(app))
+
+            val activeSession: ((() -> Unit) -> Unit) = { done -> done() }
+            ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", activeSession)
+            deliver(automatic())
+            assertNull(shadowOf(activity).nextStartedActivity)
+            assertTrue(CarPlayBackgroundSession.hasSession())
+            CarPlayBackgroundSession.clear()
+
+            deliver(automatic())
+            assertEquals(CarPlayHostActivity::class.java.name,
+                shadowOf(activity).nextStartedActivity?.component?.className)
+            assertFalse(AirPlayPersistence.loadWirelessEnabled(app))
+            assertEquals(DefaultConnectionMode.USB, DiPlayPreferences.defaultConnectionMode(app))
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
+    @Test fun queuedAutomaticStartRechecksUserChoicesSessionAndPageBeforeConnecting() {
+        app.getSharedPreferences("diplay", 0).edit().putBoolean("notification_asked", true).commit()
+        DiPlayPreferences.savePhone(app, "00:11:22:33:44:55", "Test iPhone")
+        DiPlayPreferences.saveDefaultConnectionMode(app, DefaultConnectionMode.USB)
+        AirPlayPersistence.saveWirelessEnabled(app, true)
+        AirPlayPersistence.saveWirelessHotspotMode(app, WirelessHotspotMode.WIFI_P2P)
+        val controller = Robolectric.buildActivity(DiPlayActivity::class.java, Intent(Intent.ACTION_MAIN)).create()
+        val activity = controller.get()
+        ReflectionHelpers.setField(activity, "setupError", null)
+        controller.start().resume()
+        shadowOf(Looper.getMainLooper()).idle()
+        var stops = 0
+        val activeSession: ((() -> Unit) -> Unit) = { done -> stops++; done() }
+        val changes = listOf<() -> Unit>(
+            { AirPlayPersistence.saveAutoStartOnBoot(app, false) },
+            { DiPlayPreferences.saveAutoConnect(app, false) },
+            { ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", activeSession) },
+            { ReflectionHelpers.setField(activity, "page", "settings") },
+            { ReflectionHelpers.setField(activity, "page", "setup") },
+            { ReflectionHelpers.setField(activity, "setupError", "Authentication unavailable") },
+            { activity.finish() },
+        )
+        try {
+            for (change in changes) {
+                AirPlayPersistence.saveAutoStartOnBoot(app, true)
+                DiPlayPreferences.saveAutoConnect(app, true)
+                ReflectionHelpers.setField(activity, "page", "home")
+                ReflectionHelpers.setField(activity, "setupError", null)
+                val request = Intent().putExtra(BootReceiver.EXTRA_AUTOMATIC_START, true)
+                // Keep the main looper paused until after the startup decision has changed.
+                ReflectionHelpers.callInstanceMethod<Unit>(activity, "onNewIntent",
+                    ReflectionHelpers.ClassParameter(Intent::class.java, request))
+                assertFalse(request.hasExtra(BootReceiver.EXTRA_AUTOMATIC_START))
+                change()
+                shadowOf(Looper.getMainLooper()).idle()
+                assertNull(shadowOf(activity).nextStartedActivity)
+                assertTrue(AirPlayPersistence.loadWirelessEnabled(app))
+                assertEquals(0, stops)
+                CarPlayBackgroundSession.clear()
+            }
+        } finally {
+            controller.pause().stop().destroy()
+        }
+    }
+
     @Test fun existingInstallationsKeepLastUsedBehaviorAndUnknownValuesFallBack() {
         for (lastWireless in listOf(false, true)) {
             AirPlayPersistence.saveWirelessEnabled(app, lastWireless)

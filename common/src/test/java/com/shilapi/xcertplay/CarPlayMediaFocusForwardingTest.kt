@@ -103,11 +103,11 @@ class CarPlayMediaFocusForwardingTest {
         clearInvocations(sink)
         val audio = shadowOf(app.getSystemService(AudioManager::class.java))
         audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
-        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
         shadowOf(Looper.getMainLooper()).idle()
         verify(sink, never()).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_GAIN)
         audio.setNextFocusRequestResponse(AudioManager.AUDIOFOCUS_REQUEST_GRANTED)
-        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
         shadowOf(Looper.getMainLooper()).idle()
         verify(sink).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_GAIN)
     }
@@ -151,7 +151,7 @@ class CarPlayMediaFocusForwardingTest {
         val listener = start(controller, sink)
         listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
         clearInvocations(sink)
-        CarPlayMediaKeys.onMediaAudioChanged(true) // AudioTrack is still present during the call.
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true) // AudioTrack is still present during the call.
         shadowOf(Looper.getMainLooper()).idle()
         verify(sink, never()).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_GAIN)
         // Android's own return notification remains sufficient without a new play event.
@@ -194,13 +194,42 @@ class CarPlayMediaFocusForwardingTest {
         verify(sink, never()).onMediaAudioFocusChanged(AudioManager.AUDIOFOCUS_GAIN)
     }
 
+    @Test fun geelyMusicCardFollowsFocusAndControllerOwnership() {
+        val controller = mock(CarPlayController::class.java).also(controllers::add)
+        val sink = spy(AndroidMediaSink()).also(sinks::add)
+        val listener = start(controller, sink)
+        ReflectionHelpers.getField<GeelyMediaCardPublisher>(CarPlayMediaKeys, "geelyMediaCard").close()
+        val output = GeelyMediaCardPublisher(app) { true }
+        ReflectionHelpers.setField(CarPlayMediaKeys, "geelyMediaCard", output)
+        `when`(controller.nowPlayingSnapshot()).thenReturn(CarPlayNowPlaying(title = "Music", artist = "Artist", playing = true))
+        ReflectionHelpers.callInstanceMethod<Unit>(CarPlayMediaKeys, "onNowPlayingChanged",
+            ReflectionHelpers.ClassParameter(CarPlayController::class.java, controller))
+        shadowOf(Looper.getMainLooper()).idle()
+        fun packets() = shadowOf(app).broadcastIntents.filter { it.action == GeelyMediaCardPublisher.ACTION }
+        assertTrue(packets().last().getBooleanExtra("RECEIVER_MEDIA_APP_STATUS", false))
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_LOSS)
+        assertEquals(2, packets().last().getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1))
+        val releasedCount = packets().size
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6))
+        assertEquals(releasedCount, packets().size)
+
+        listener.onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
+        assertTrue(packets().last().getBooleanExtra("RECEIVER_MEDIA_APP_STATUS", false))
+        CarPlayMediaKeys.detach(controller)
+        assertEquals(2, packets().last().getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1))
+        val disconnectedCount = packets().size
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6))
+        assertEquals(disconnectedCount, packets().size)
+    }
+
     private fun start(controller: CarPlayController, sink: AndroidMediaSink,
         clearInitialGrant: Boolean = true): AudioManager.OnAudioFocusChangeListener {
         `when`(controller.nowPlayingSnapshot()).thenReturn(CarPlayNowPlaying())
         CarPlayBackgroundSession.store(controller, sink, 800, 480, Any(),
             CarPlaySessionDisplay(800, 480, Surface.ROTATION_0, false, false, 800, 480)) {}
         CarPlayMediaKeys.attach(app, controller)
-        CarPlayMediaKeys.onMediaAudioChanged(true)
+        CarPlayMediaKeys.onMediaAudioChanged(controller, true)
         shadowOf(Looper.getMainLooper()).idle()
         if (clearInitialGrant) clearInvocations(sink)
         val request = ReflectionHelpers.getField<AudioFocusRequestCompat>(CarPlayMediaKeys, "focusRequest")
