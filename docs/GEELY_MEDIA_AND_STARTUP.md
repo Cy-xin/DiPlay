@@ -57,3 +57,17 @@ DiPlay 已有：
 结果 `BUILD SUCCESSFUL`。单元测试报告合计 3145 项，1 项跳过，0 失败/错误（shared 1654、common 1485、home 6）。三个应用的 lint 和 debug 构建完成。公开源码文件检查及补丁格式检查通过。测试覆盖 OneOS 广播字段和频率、焦点失去/恢复、断开清理、旧连接回调隔离、工厂音频归属、启动请求排队后状态改变与标准桌面入口。
 
 `mobile-debug.apk` 的包名为 `com.shihab.diplay.hudtest`，版本 `0.2.21-hud-test`，未包含配件认证容器。APK 构建成功和单元测试通过不能证明真实 iPhone 连接或原车界面显示已通过。
+
+## 后续只读车机核对
+
+已从本车只读取得 `oneOS_OnlineMusicService.apk`，版本 `1.0.20260319G(34)`、code 52，SHA-256 `9358c25abe668019b66bca9f0ab7318c20e98a56999aa1c8e7ca0b5e5fda1e6b`。本节依据该原车包的新证据，不改变前文对原 GeelyCarPlay APK 暂不可读取的说明。
+
+- `com.media.control.MediaControlReceiver.onReceive` 与当前上报字段及类型一致；其存活检查超过 4000ms 没有消息会通知应用离线，检查间隔 2000ms，支持本次两秒保持更新的设计。
+- 该接收器只在播放状态值变化时通知监听者，因此新曲目发送状态边沿再恢复实际状态，有原车实现依据，不能仅重复同一个播放值。
+- `FDBookManager.getCurrentMusicInfo` 将标题、作者、时长、进度与封面字符串组成原车 `MusicInfo`。播放状态 3 会选择 `fandeng` 媒体来源。该路径使用原车既有樊登读书通道，不能据此称为厂商提供的通用 CarPlay SDK。
+- 反向控制不是通用广播：`MediaPlayHelper` 固定目标包 `io.dushu.car`，接收器类 `io.dushu.car.receiver.MediaControlReceiver`，拉起页面 `io.dushu.car.mvp.view.TransparentActivity`。当前 DiPlay 正式包 `com.shihab.diplay` 无法接到这些定向指令。因此本次只能承诺已实现上报路径，不能承诺原车卡片播放/暂停/切歌按钮已能控制 DiPlay；没有修改包名或系统服务来规避这个边界。
+- 封面字符串沿媒体接口传递至其他原车组件；尚未完整验证所有消费方如何读取和授权，专用上报仍留空，未复制原包的可公开读取文件路径。
+
+新 REA Evidence：接收器方法 `ev_09744d40eb11dc7cfa2e0bb7a48c3063a78459870c6111701f247995afbd66e4`；媒体信息转换 `ev_a91ee8f71cbdcc258d9950229268c8e912a776745f6b87d5ee7626622864c840`。这些是静态代码证据，不代表已经发送测试广播或观察到仪表显示。
+
+本次读取时车上安装的是 DiPlay 0.2.16（code 41），未安装本分支测试包；`io.dushu.car` 不在当前查询到的安装列表。没有替换已安装应用、没有播放测试曲目，也没有改动原车媒体来源或桌面数据库。

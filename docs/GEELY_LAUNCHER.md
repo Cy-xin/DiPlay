@@ -1,29 +1,55 @@
-# 吉利主屏常用应用列表：接入核对
+# 吉利主屏「应用建议」卡片：原因与接入边界
 
-## 本次结论
+## 已确定的原因
 
-GeelyCarPlay 已显示在该车主屏的常用应用列表，但现有证据不足以确定它如何被原车桌面排序、筛选或固定。DiPlay 已有相同的标准 Android `MAIN` / `LAUNCHER` 入口，不能把重复声明该入口当作新增吉利常用应用接入。
+本车主屏左下的「应用建议」卡片由原车 `com.geely.recents/com.geely.recents.appsuggest.SuggestProvider` 提供，绑定关系已通过只读车机检查确认。它采用原车 APK 中固定的包名白名单。GeelyCarPlay 使用的 `io.dushu.car` 已在名单内；DiPlay 正式包 `com.shihab.diplay` 和调试包 `com.shihab.diplay.hudtest` 均不在名单内。
 
-这次没有新增未经验证的 OEM 注册方法、伪造使用记录、广播常用列表变化，也没有修改原车桌面数据。常用列表的实际新增和实车验证尚未完成。
+因此，GeelyCarPlay 能进入这张卡片的关键条件在原车端。仅修改 DiPlay 的名称、图标、主入口或任务属性，不能把 DiPlay 加进原车白名单。本次没有添加无依据的注册接口，也没有更改 DiPlay 包名、替换原车应用、修改系统资源或写入原车数据。
 
-## 已核对的证据
+该结论针对本次取得的 KX11_A2 固件样本，不代表所有吉利车机都使用同一规则。
 
-- 原 GeelyCarPlay APK 的 REA manifest 记录：包名 `io.dushu.car`，主入口 `io.dushu.car.CarPlayActivity`，`exported=true`，标准 `MAIN` / `LAUNCHER`。该记录未声明常用列表专属权限、元数据或接收器。Evidence：`ev_ee14b104493b52e834ee053b4e76d582e4a36b4708e6c4a54395f54e4fa3de44`，对应 APK SHA-256 `c31d4a18395354da45cbf09c69a5d852779ee97da91f38e307cc578f6d61b8da`。当前原始 APK 已不可读取，本结论复用先前保留的完整 Evidence，不声称本次重新反编译成功。
-- 原 APK 的已保存补充 JADX 导出中，没有发现独立的常用应用注册调用。此为有范围的负面搜索，不能证明所有动态、反射或原车端行为均不存在。
-- DiPlay 的 `common/src/main/AndroidManifest.xml` 同样向桌面公开 `DiPlayActivity` 的 `MAIN` / `LAUNCHER` 入口。播放页公开且没有 `excludeFromRecents=true`。`mobile` 的应用名称与图标仍为 DiPlay 与现有 CarPlay 图标。
-- DiPlay 播放页有独立 `${applicationId}.carplay` task affinity；GeelyCarPlay 原 manifest 未为播放页声明该属性。DiPlay 的 `OwnScreenStart.kt` 说明这个任务边界涉及已有 BYD 桌面卡片兼容性。没有桌面筛选规则证据，不能据此认定它是常用列表缺失的原因，也不应全局删除。
-- 本车软件清单记录原车桌面为 `com.android.launcher3`，APK 路径 `/system/priv-app/oneOS_Launcher3/oneOS_Launcher3.apk`。当前已有检测档案中没有这个 APK，本次无线调试未建立可用连接，无法继续读取原车列表实现。
-- 已有 SystemUIPlugin 导出包含 `RECENT_CHANGE_INTENT` / `recentPackages` 常量，但在该导出中没有找到其完整发布、接收和列表筛选链路。常量本身不是可调用的注册接口。
+## 卡片如何工作
 
-GeelyCarPlay 会向原车在线媒体服务发布音乐信息；是否因此影响“常用应用”或媒体来源列表，需要桌面代码或前后状态对照证明，当前不能混为一谈。
+1. `AppSuggestManager.init(Context)` 读取原车资源 `array/app_suggest_white_list`，注册任务栈监听器。
+2. 前台应用变化后，只有 `topActivity` 的包名在名单内，才会从历史列表去重并移到第一位，然后刷新卡片。
+3. `getAllAppDataList(Context)` 在显示前再次删除未安装或不在白名单内的包，并保存历史缓存 `APP_SUGGEST`。
+4. `SuggestProvider.showData(Context, RemoteViews)` 最多取前四项显示图标。点击后通过包管理器取得该包的普通启动入口，在主屏打开应用。
 
-## 已增加的回归保护
+这是按前台使用先后排列的建议列表，不能据此称为按使用次数统计的「高频排行榜」。名单内应用在启动并成为前台后才具备更新列表的条件；并非安装完成就保证立即出现。
 
-`GeelyLauncherEligibilityTest` 通过 Android 包管理器验证主入口可解析、启用并公开，主入口及播放页没有排除最近任务；同时检查既有播放任务边界以及移动端应用名称和图标声明。这些检查只能保护标准 Android 桌面可见性，不能验证吉利常用列表中的排名或固定状态。
+发送卡片刷新广播只会重新读取、过滤现有列表，不会增加白名单成员。原车是否在某个系统界面提供白名单编辑功能，尚未验证。
 
-## 后续验证所需的最小证据
+## 静态证据与验证范围
 
-1. 在车机已连接时，只读取得原车 Launcher APK，记录版本和 SHA-256；跟踪常用应用视图的数据来源、白名单/黑名单、使用统计与任务组件匹配规则。
-2. 确认用户看到的是主屏常用应用区、左侧快捷栏、最近任务，还是媒体来源列表；保存对应屏幕与列表状态。
-3. 同样操作启动一次 DiPlay 与 GeelyCarPlay，比较原车列表变化和只读日志，记录实际包名、主入口、播放页与任务信息。不能将手工启动后的出现归因于某个未调用接口。
-4. 如果桌面确有公开或可验证的应用注册契约，再加入仅针对本车固件的最小适配，并保留拒绝、服务缺失和其他车机的退化路径。
+只读取得的 `Recents.apk`：12,367,260 字节，SHA-256：
+
+`63f414551a1afe173b40faca60c83a2fa65160343a281900c8ba420e468b3fc3`
+
+ZIP 完整性检查通过。Android SDK Build-Tools 36.0.0 的 `aapt2 dump resources` 读取到 `app_suggest_white_list` 有 47 个条目，其中 `io.dushu.car` 出现两次，两个 DiPlay 包名均不存在。
+
+REA 保留了以下完整方法记录：
+
+| 事实 | 方法 | Evidence ID |
+| --- | --- | --- |
+| 加载固定白名单、监听前台应用、仅名单内应用移到首位 | `com.geely.recents.appsuggest.AppSuggestManager.init` | `ev_eb1b82dd86806ff49096c0457d4cf95971474b0fac69f84ec1cb1538e199cd01` |
+| 显示前再次过滤已安装状态和白名单 | `com.geely.recents.appsuggest.AppSuggestManager.getAllAppDataList` | `ev_c746266c26b7fd72e1959fce01de45f2b1f45e046e06b64232fb35f778d1e7b6` |
+
+上述两个方法均为完整 Java 表示，无 smali 回退或截断标记。最多四项、点击启动和历史缓存行为还参考了同一 APK 的补充 JADX 导出。`SuggestProvider.showData` 的图标局部有类型推断警告，因此不将这部分导出当作可直接编译的原始源码。
+
+这是原车样本的静态实现与当前卡片绑定关系核对；没有安装修改版、强制刷新卡片、运行替代包或验证修改后的实车效果。
+
+## 可采取的方案
+
+- **保留普通 DiPlay 安装方式**：继续使用已有应用入口或 DiPlay 已有的桌面悬浮球功能。它们不依赖这张原车卡片的固定白名单。当前车机是否允许悬浮显示，仍以实际授权为准。
+- **由车机固件提供正式适配**：在原车 `com.geely.recents` 的建议名单中加入 DiPlay 包名，或使用固件明确支持的自定义入口。这样才是针对这张卡片的直接修改；需先确认系统支持的资源配置方式、签名和恢复路径。
+- **继续研究可配置入口**：可以先只读检查这套固件是否有受支持的名单配置接口，再决定是否制作独立适配组件。当前未找到可由普通 DiPlay 应用调用的接口，不能先做一个声称有效的开关。
+
+不把 DiPlay 改名成 `io.dushu.car` 作为默认方案：这会与同包名应用冲突，而且原车其他媒体功能也对该包名和具体接收器类名有预设，迁移包名不等于完整、可靠的系统兼容。
+
+## 与其他应用区域的区别
+
+「应用建议」不是左侧快捷栏、全部应用页、最近任务页，也不是 `com.geely.pushwidget` 的云端应用商城推荐卡。
+
+补充分析发现：原车 Launcher 的全部应用目录还会合并内置资产配置和应用商城目录；`com.geely.pushwidget` 的 `HomeAppWidget` 则消费云端 `BannerData`。这些路径不能替代本卡片的 `AppSuggestManager` 白名单机制，也不能据它们宣称 DiPlay 已进入「应用建议」。
+
+已有 `GeelyLauncherEligibilityTest` 只保护 DiPlay 标准 Android 主入口的可解析性、公开状态、最近任务可见性、现有任务边界及名称图标声明。它不测试也不保证原车建议白名单中的成员资格。
