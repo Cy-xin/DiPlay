@@ -43,3 +43,17 @@ DiPlay 已有：
 音乐协议依据原 GeelyCarPlay APK 的补充 JADX 导出 `defpackage/hb1.java`、`mc0.java`、`p3.java`、`k5.java`；自动启动依据 `w00.java`、`BootReceiver.java`、`BootPreparationService.java` 和 `CarPlayActivity.java`。本次原始桌面 APK 已不在原路径，REA 复核返回 `target_unavailable`；因此这些行为是复用此前导出的静态证据，并非新一次成功反编译或实车观测。原文件身份记录 SHA-256：`c31d4a18395354da45cbf09c69a5d852779ee97da91f38e307cc578f6d61b8da`。
 
 用户当前未连接车机；未安装本次 APK，未发送原车控制指令，未做仪表/常用列表/手机重连的实车验证。源码构建不配置配件认证身份，不能单凭 APK 构建成功声称可完成真实 CarPlay 连接。
+
+## 离线检查结果
+
+2026-10-31 对代码提交 `5aa89c06` 串行运行仓库要求的完整检查：
+
+```sh
+./gradlew :shared:testDebugUnitTest :common:testDebugUnitTest :home:testDebugUnitTest \
+  :mobile:lintDebug :home:lintDebug :maphost:lintDebug \
+  :mobile:assembleDebug :home:assembleDebug :maphost:assembleDebug --stacktrace
+```
+
+结果 `BUILD SUCCESSFUL`。单元测试报告合计 3145 项，1 项跳过，0 失败/错误（shared 1654、common 1485、home 6）。三个应用的 lint 和 debug 构建完成。公开源码文件检查及补丁格式检查通过。测试覆盖 OneOS 广播字段和频率、焦点失去/恢复、断开清理、旧连接回调隔离、工厂音频归属、启动请求排队后状态改变与标准桌面入口。
+
+`mobile-debug.apk` 的包名为 `com.shihab.diplay.hudtest`，版本 `0.2.21-hud-test`，未包含配件认证容器。APK 构建成功和单元测试通过不能证明真实 iPhone 连接或原车界面显示已通过。
