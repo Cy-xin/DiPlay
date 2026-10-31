@@ -55,6 +55,7 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
+            android:taskAffinity="io.dushu.car.factory"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 

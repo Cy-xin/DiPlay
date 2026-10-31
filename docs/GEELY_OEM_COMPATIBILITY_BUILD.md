@@ -48,6 +48,8 @@ scripts/verify_compat_apk.sh <path-to-apk>
 
    跳板**只在没有会话可播放时才拉起主界面**。会话在线时按播放键只发播放请求，不打开窗口：此时应用正全屏投屏，拉起 `DiPlayActivity` 会盖住投屏、窗口被替换后再退回去，观感就是屏幕跳走又跳回（实车录像已确认，首版正是因此每次按键都会闪一次）。没有会话时打开窗口才有意义——那是连接手机的入口。
 
+   只去掉这一步还不够：跳板若与主界面同任务栈，跳板 `finish()` 后系统会把该任务栈的栈顶（`DiPlayActivity`）恢复为前台，屏幕同样会跳。实车对照实验证实了这一点——用一个不会被识别的 `INTENT_TYPE` 启动跳板（既不按键也不打开应用），前台依然变成 `DiPlayActivity`。因此 `TransparentActivity` 声明了独立 `taskAffinity`，让它独占一个任务，`finish()` 后任务消失、前台留在原界面。
+
 3. **`OPEN_PLAY` 携带的书 ID 和进度是本应用自己上报值的回显**，不是 iPhone 书库标识。核对后不作转发、不据此 seek iPhone，只把这次点击理解为「打开并播放」。
 
 后台启动限制同样已实测：`MEDIA_CONTROL_OPEN_APP` 分支里的 `startActivity` 不抛异常但不出现窗口（BAL 静默拦截），因此不能靠返回值判断成败。原车自身以 `android.uid.system` 运行，拉起跳板不受此限制，这也是唯一可用的「打开」路径。
