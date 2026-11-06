@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="primary_nav_carplay">CarPlay</string>
+  <string name="primary_nav_vehicle">车机</string>
+  <string name="primary_nav_settings">设置</string>
+  <string name="vehicle_hub_subtitle">仪表显示与方向盘控制</string>
+  <string name="vehicle_hub_projection_hint">选择屏幕与地图显示区域</string>
+  <string name="vehicle_hub_layout_hint">调整 HUD 与仪表内容</string>
+  <string name="vehicle_hub_keys_hint">识别、分配与测试按键</string>
+  <string name="home_shortcuts">常用功能</string>
+</resources>

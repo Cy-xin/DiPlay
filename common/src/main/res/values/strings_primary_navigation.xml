@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="primary_nav_carplay">CarPlay</string>
+  <string name="primary_nav_vehicle">Vehicle</string>
+  <string name="primary_nav_settings">Settings</string>
+  <string name="vehicle_hub_subtitle">Instrument display and steering controls.</string>
+  <string name="vehicle_hub_projection_hint">Choose the screen and visible map area.</string>
+  <string name="vehicle_hub_layout_hint">Adjust HUD and instrument content.</string>
+  <string name="vehicle_hub_keys_hint">Identify, assign and test buttons.</string>
+  <string name="home_shortcuts">Quick access</string>
+</resources>

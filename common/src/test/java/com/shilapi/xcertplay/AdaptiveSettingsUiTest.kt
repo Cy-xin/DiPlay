@@ -471,13 +471,13 @@ class AdaptiveSettingsUiTest {
 
     @Test
     @Config(qualifiers = "en-w900dp-h600dp-land")
-    fun backCollapsesAnEmptySearchAndFullLayoutKeepsItsExistingLabel() {
+    fun backCollapsesAnEmptySearchAndFullLayoutKeepsItsAccessibleIcon() {
         val screen = openSettings()
         val button = descendants(screen.window.decorView).single {
             it.contentDescription == screen.getString(R.string.settings_search)
         }
-        assertTrue(button is android.widget.Button)
-        assertEquals(screen.getString(R.string.settings_search_hint), (button as TextView).text.toString())
+        assertTrue(button is android.widget.ImageButton)
+        assertEquals(screen.getString(R.string.settings_search), button.contentDescription)
         button.performClick()
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(descendants(screen.window.decorView).any { it is EditText && it.hasFocus() })
@@ -691,7 +691,9 @@ class AdaptiveSettingsUiTest {
     @Test fun toolbarBackFromConnectionSetupReturnsToConnectionSettings() {
         val screen = openConnectionSetupFromSettings()
 
-        texts(screen).single { it.text == screen.getString(R.string.back) }.performClick()
+        descendants(screen.window.decorView).single {
+            it.contentDescription == screen.getString(R.string.back)
+        }.performClick()
 
         assertEquals("settings", ReflectionHelpers.getField<String>(screen, "page"))
         assertTrue(texts(screen).any { it.text == screen.getString(R.string.connection_setup) })
@@ -1340,7 +1342,10 @@ class AdaptiveSettingsUiTest {
     private fun isInside(view: View, ancestor: View): Boolean =
         generateSequence(view.parent) { it.parent }.any { it === ancestor }
 
-    private fun texts(screen: DiPlayActivity) = descendants(screen.window.decorView).filterIsInstance<TextView>()
+    // Category assertions inspect page content; the persistent primary tabs are a separate region.
+    private fun texts(screen: DiPlayActivity) = descendants(
+        screen.window.decorView.findViewWithTag<View>("diplay-page-content") ?: screen.window.decorView,
+    ).filterIsInstance<TextView>()
 
     private fun descendants(view: View): Sequence<View> = sequence {
         yield(view)

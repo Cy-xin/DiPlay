@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="primary_nav_carplay">CarPlay</string>
+  <string name="primary_nav_vehicle">Araç</string>
+  <string name="primary_nav_settings">Ayarlar</string>
+  <string name="vehicle_hub_subtitle">Gösterge ekranı ve direksiyon kumandaları.</string>
+  <string name="vehicle_hub_projection_hint">Ekranı ve harita alanını seçin.</string>
+  <string name="vehicle_hub_layout_hint">HUD ve gösterge içeriğini ayarlayın.</string>
+  <string name="vehicle_hub_keys_hint">Düğmeleri tanımlayın, atayın ve test edin.</string>
+  <string name="home_shortcuts">Hızlı erişim</string>
+</resources>

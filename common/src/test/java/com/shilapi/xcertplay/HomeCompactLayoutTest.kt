@@ -17,12 +17,12 @@ import org.robolectric.util.ReflectionHelpers
 @Config(sdk = [29])
 class HomeCompactLayoutTest {
     @Config(qualifiers = "en-w900dp-h400dp-land")
-    @Test fun compactLandscapeKeepsWirelessAndUsbInSeparateColumns() {
+    @Test fun compactLandscapeGroupsConnectionActionsBesideVehicleShortcuts() {
         verifyCompactArrangement(landscape = true)
     }
 
     @Config(qualifiers = "en-w400dp-h900dp-port")
-    @Test fun compactPortraitStacksWirelessBeforeUsb() {
+    @Test fun compactPortraitKeepsConnectionActionsBeforeVehicleShortcuts() {
         verifyCompactArrangement(landscape = false)
     }
 
@@ -43,9 +43,15 @@ class HomeCompactLayoutTest {
         val usb = text(R.string.connect_with_usb)
         val connectPosition = IntArray(2).also(connect::getLocationOnScreen)
         val usbPosition = IntArray(2).also(usb::getLocationOnScreen)
-        if (landscape) assertTrue(usbPosition[0] >= connectPosition[0] + connect.width)
-        else assertTrue(usbPosition[1] >= connectPosition[1] + connect.height)
-        assertTrue(text(R.string.car_home).visibility == View.VISIBLE)
+        assertSame(connect.parent, usb.parent)
+        assertTrue(usbPosition[1] >= connectPosition[1] + connect.height)
+        val shortcuts = text(R.string.home_shortcuts)
+        val shortcutsPosition = IntArray(2).also(shortcuts::getLocationOnScreen)
+        if (landscape) assertTrue(shortcutsPosition[0] >= connectPosition[0] + connect.width)
+        else assertTrue(shortcutsPosition[1] >= usbPosition[1] + usb.height)
+        assertTrue(descendants(root).single {
+            it.contentDescription == activity.getString(R.string.car_home)
+        }.visibility == View.VISIBLE)
         assertFalse(descendants(root).filterIsInstance<TextView>().any {
             it.text == activity.getString(R.string.a_familiar_drive) ||
                 it.text == activity.getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y)
@@ -72,8 +78,7 @@ class HomeCompactLayoutTest {
         val activity = Robolectric.buildActivity(DiPlayActivity::class.java).setup().get()
         shadowOf(activity).setInMultiWindowMode(multiWindow)
         ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
-        val detail = activity.getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y)
-        return descendants(activity.window.decorView).filterIsInstance<TextView>().none { it.text == detail }
+        return ReflectionHelpers.getField<TextView?>(activity, "homeConnectionHint") == null
     }
 
     private fun descendants(view: View): Sequence<View> = sequence {

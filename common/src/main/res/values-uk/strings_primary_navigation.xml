@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="primary_nav_carplay">CarPlay</string>
+  <string name="primary_nav_vehicle">Автомобіль</string>
+  <string name="primary_nav_settings">Налаштування</string>
+  <string name="vehicle_hub_subtitle">Панель приладів і кнопки керма.</string>
+  <string name="vehicle_hub_projection_hint">Виберіть екран та область карти.</string>
+  <string name="vehicle_hub_layout_hint">Налаштуйте вміст HUD і панелі.</string>
+  <string name="vehicle_hub_keys_hint">Визначення, призначення та перевірка кнопок.</string>
+  <string name="home_shortcuts">Швидкий доступ</string>
+</resources>

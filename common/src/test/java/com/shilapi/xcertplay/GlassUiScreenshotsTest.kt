@@ -29,7 +29,7 @@ import org.robolectric.util.ReflectionHelpers
 class GlassUiScreenshotsTest {
     @Test fun capturesHomeSettingsAndSetupInBothAppearances() {
         for (night in listOf(false, true)) {
-            for (page in listOf("home", "settings", "connection", "backup")) {
+            for (page in listOf("home", "vehicle", "settings", "connection", "backup")) {
                 capture(page, night, 1280, 800, 1.3f, "zh", "${if (night) "dark" else "light"}-$page")
             }
         }
@@ -109,6 +109,10 @@ class GlassUiScreenshotsTest {
                 View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
             content.layout(0, 0, w, h)
             shadowOf(Looper.getMainLooper()).idle()
+            // Status and focus callbacks can request another traversal, as on a real ViewRoot.
+            content.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+            content.layout(0, 0, w, h)
             assertTrue("$name has usable controls", descendants(content).any { it.isClickable && it.width > 0 })
             assertTrue("$name keeps button labels", descendants(content).filterIsInstance<Button>().all { it.text.isNotBlank() || it.contentDescription != null })
             val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)

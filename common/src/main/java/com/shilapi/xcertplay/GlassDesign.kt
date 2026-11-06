@@ -28,6 +28,11 @@ internal object GlassDesign {
     const val CONTROL_RADIUS_DP = 20
     const val PANEL_INSET_DP = 24
     const val SECTION_GAP_DP = 20
+    const val NAV_HEIGHT_DP = 76
+    const val NAV_ITEM_WIDTH_DP = 104
+    const val NAV_MARGIN_DP = 16
+    const val NAV_INSET_DP = 8
+    const val NAV_ELEVATION_DP = 6
 
     fun backdrop(palette: DiPlayPalette) = object : GradientDrawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -38,7 +43,7 @@ internal object GlassDesign {
             if (bounds.isEmpty) return
             glow = RadialGradient(bounds.width() * .12f, bounds.height() * .05f,
                 maxOf(bounds.width(), bounds.height()) * .85f,
-                ColorUtils.setAlphaComponent(palette.accent, 26), Color.TRANSPARENT, Shader.TileMode.CLAMP)
+                ColorUtils.setAlphaComponent(palette.accent, if (palette.systemBarIconsAreDark) 0 else 10), Color.TRANSPARENT, Shader.TileMode.CLAMP)
         }
         override fun draw(canvas: Canvas) {
             super.draw(canvas)
@@ -51,6 +56,10 @@ internal object GlassDesign {
         ContinuousGlassDrawable(color, border, context.resources.displayMetrics.density).apply {
             cornerRadius = radiusDp * context.resources.displayMetrics.density
         }
+
+    fun connectionSurface(context: Context, palette: DiPlayPalette) = surface(context,
+        if (palette.systemBarIconsAreDark) Color.rgb(140, 235, 161) else Color.rgb(35, 77, 51),
+        Color.TRANSPARENT)
 
     fun styleButton(button: Button, palette: DiPlayPalette, primary: Boolean = false) = button.apply {
         isAllCaps = false
@@ -107,7 +116,7 @@ internal class ContinuousGlassDrawable(
             outlinePath.close()
         }
         val isDark = ColorUtils.calculateLuminance(fill) < .25
-        val top = ColorUtils.blendARGB(fill, Color.WHITE, if (isDark) .055f else .22f)
+        val top = ColorUtils.blendARGB(fill, Color.WHITE, if (isDark) .025f else .04f)
         gradient = LinearGradient(0f, t, 0f, b, top, fill, Shader.TileMode.CLAMP)
     }
 
@@ -118,7 +127,7 @@ internal class ContinuousGlassDrawable(
         canvas.drawPath(outlinePath, paint)
         paint.shader = null; paint.style = Paint.Style.STROKE; paint.strokeWidth = density
         val edge = ColorUtils.blendARGB(border, Color.WHITE, .10f)
-        paint.color = edge; paint.alpha = (Color.alpha(edge) * alpha / 255f * .65f).toInt()
+        paint.color = edge; paint.alpha = (Color.alpha(edge) * alpha / 255f * .28f).toInt()
         canvas.drawPath(outlinePath, paint)
     }
 
