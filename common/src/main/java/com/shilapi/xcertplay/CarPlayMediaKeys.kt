@@ -12,12 +12,14 @@ import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.graphics.drawable.toBitmap
+import androidx.core.content.FileProvider
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.compat.AudioFocusRequestCompat
 import com.shilapi.xcertplay.host.R
@@ -29,6 +31,8 @@ import com.shilapi.xcertplay.vehicleprobe.VehicleSteeringClient
 import com.shilapi.xcertplay.vehicleprobe.VehicleProjectionClient
 import java.util.concurrent.Executors
 import java.util.concurrent.Executor
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
 /**
@@ -117,6 +121,12 @@ internal object CarPlayMediaKeys {
     private var artwork: Bitmap? = null
     private val artworkCache = LinkedHashMap<Int, Bitmap?>()
     private var placeholder: Bitmap? = null
+    // OneOS's media service needs a cover URL in addition to MediaSession metadata.
+    // Expose a private file through URI grants to the OEM readers, never a world-readable path.
+    private val ARTWORK_READERS = listOf("android.car.cluster", "com.geely.online.service",
+        "com.geely.mediacenterservice", "com.geely.dimservice", "com.geely.mediawidget")
+    private var clusterArtworkUri: Uri? = null
+    private var clusterArtworkBitmap: Bitmap? = null
 
     @Synchronized
     fun attach(context: Context, next: CarPlayController, manageAudioFocus: Boolean = true,
@@ -273,6 +283,7 @@ internal object CarPlayMediaKeys {
             controller?.let { com.shilapi.xcertplay.media.AmbientMusicController.albumColorChanged(it, result?.color) }
             controller?.let(::updateInitialAlbumRecovery)
             session?.setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
+            publishGeelyMediaCardLocked()
         }
     }
 
@@ -765,9 +776,12 @@ internal object CarPlayMediaKeys {
     private fun publishGeelyMediaCardLocked() {
         val ownsSource = controller != null && session?.isActive == true &&
             (if (manageAudioFocus && focusRequest != null) focusHeld && !transientFocusInterrupted else sinkOwnsAudio)
+        val coverUri = if (ownsSource) artwork?.let { cover ->
+            appContext?.let { refreshClusterArtworkUri(it, cover) }
+        } else null
         geelyMediaCard?.update(ownsSource, nowPlaying.copy(
             playing = if (nowPlaying.elapsedMillis != null || nowPlaying.title != null) nowPlaying.playing else mediaAudioActive,
-        ))
+        ), coverUri?.toString().orEmpty())
     }
 
     private fun publishPlaybackStateLocked() {
@@ -864,6 +878,59 @@ internal object CarPlayMediaKeys {
     internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
         previous.copy(elapsedMillis = null, playing = false) != next.copy(elapsedMillis = null, playing = false)
 
+    /**
+     * Persists [bitmap] to disk and returns a content:// Uri the instrument cluster can load
+     * cross-process through the OneOS media contract and Android MediaSession URI keys.
+     * The result is cached against the bitmap identity so metadata
+     * republishes during playback do not re-encode the image.
+     */
+    private fun refreshClusterArtworkUri(context: Context, bitmap: Bitmap): Uri? {
+        if (bitmap === clusterArtworkBitmap && clusterArtworkUri != null) return clusterArtworkUri
+        synchronized(this) {
+            if (bitmap === clusterArtworkBitmap && clusterArtworkUri != null) return clusterArtworkUri
+            val dir = File(context.filesDir, "cluster_artwork").apply { if (!exists()) mkdirs() }
+            val target = if (bitmap.width > 512 || bitmap.height > 512) {
+                val scale = 512f / maxOf(bitmap.width, bitmap.height)
+                Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt(), (bitmap.height * scale).toInt(), true)
+            } else bitmap
+            val file = File(dir, "cover_${System.nanoTime()}.jpg")
+            try {
+                FileOutputStream(file).use { out ->
+                    check(target.compress(Bitmap.CompressFormat.JPEG, 90, out)) { "JPEG encoding failed" }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "cluster artwork persist failed", e)
+                return null
+            } finally {
+                if (target !== bitmap) target.recycle()
+            }
+            val uri = try {
+                FileProvider.getUriForFile(context, "${context.packageName}.cluster-artwork", file)
+            } catch (e: Exception) {
+                Log.w(TAG, "cluster artwork uri failed", e)
+                return null
+            }
+            ARTWORK_READERS.forEach { reader ->
+                runCatching {
+                    context.grantUriPermission(reader, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }.onFailure { Log.w(TAG, "cluster artwork grant failed reader=$reader", it) }
+            }
+            // OEM consumers fetch asynchronously. Keep old grants/files briefly after a track change.
+            dir.listFiles()?.filter { it != file && it.name.startsWith("cover_") &&
+                System.currentTimeMillis() - it.lastModified() > 120_000L }?.forEach { old ->
+                runCatching {
+                    val oldUri = FileProvider.getUriForFile(context, "${context.packageName}.cluster-artwork", old)
+                    context.revokeUriPermission(oldUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    old.delete()
+                }
+            }
+            Log.i(TAG, "cluster artwork ready uri=$uri bytes=${file.length()}")
+            clusterArtworkBitmap = bitmap
+            clusterArtworkUri = uri
+            return uri
+        }
+    }
+
     internal fun androidMetadata(info: CarPlayNowPlaying, artwork: Bitmap? = null): MediaMetadata =
         MediaMetadata.Builder().apply {
             info.title?.let {
@@ -877,9 +944,23 @@ internal object CarPlayMediaKeys {
             info.album?.let { putString(MediaMetadata.METADATA_KEY_ALBUM, it) }
             info.durationMillis?.let { putLong(MediaMetadata.METADATA_KEY_DURATION, it) }
             info.sourceApp?.let { putString(MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION, it) }
-            artwork?.let {
-                putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it)
-                putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it)
+            artwork?.let { cover ->
+                // Consumers disagree on the key: the launcher widget reads ALBUM_ART, the Geely
+                // instrument cluster reads ART. Publishing one of them left the cluster on its own
+                // placeholder while the card showed the cover.
+                putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, cover)
+                putBitmap(MediaMetadata.METADATA_KEY_ART, cover)
+                putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, cover)
+                // The instrument cluster loads the cover from a content:// Uri (FileProvider),
+                // not a Bitmap, so publish the same cover under the *_URI keys as well.
+                appContext?.let { ctx ->
+                    refreshClusterArtworkUri(ctx, cover)?.let { uri ->
+                        // android.media.MediaMetadata has no putUri(); Uri keys are stored as Strings.
+                        putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, uri.toString())
+                        putString(MediaMetadata.METADATA_KEY_ART_URI, uri.toString())
+                        putString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI, uri.toString())
+                    }
+                }
             }
         }.build()
 

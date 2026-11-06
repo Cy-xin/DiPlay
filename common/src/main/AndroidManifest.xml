@@ -80,6 +80,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_apk_paths" />
         </provider>
+        <!-- carlito | Exposes the now-playing cover to the instrument cluster (android.car.cluster),
+             which loads the cover from a content:// Uri instead of a cross-process Bitmap. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.cluster-artwork"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/cluster_artwork_paths" />
+        </provider>
         <activity android:name="com.shilapi.xcertplay.DiPlayActivity"
             android:exported="true" android:launchMode="singleTop"
             android:resizeableActivity="true"

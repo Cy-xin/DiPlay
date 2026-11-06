@@ -67,6 +67,30 @@ class GeelyMediaCardPublisherTest {
         assertEquals(2, songs.last().getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1))
     }
 
+    @Test fun asynchronousCoverPublishesImmediatelyAndSurvivesPositionQueries() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        output.update(true, track)
+        val uri = "content://io.dushu.car.cluster-artwork/cluster_artwork/cover_test.jpg"
+        output.update(true, track, uri)
+        assertEquals(listOf(2, 3), songs.takeLast(2).map { it.getIntExtra("RECEIVER_MEDIA_PLAY_STATUS", -1) })
+        assertTrue(songs.takeLast(2).all { it.getStringExtra("RECEIVER_MEDIA_BOOK_COVERURL") == uri })
+        val count = songs.size
+        output.update(true, track.copy(elapsedMillis = 13_000), uri)
+        assertEquals(count, songs.size)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
+        output.publishNow()
+        assertEquals(uri, songs.last().getStringExtra("RECEIVER_MEDIA_BOOK_COVERURL"))
+        output.update(true, track.copy(title = "Next"))
+        assertEquals("", songs.last().getStringExtra("RECEIVER_MEDIA_BOOK_COVERURL"))
+    }
+
+    @Test fun aCoverCannotReclaimAnInactiveSource() {
+        val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
+        output.update(false, track, "content://test/cover.jpg")
+        output.publishNow()
+        assertTrue(broadcasts.isEmpty())
+    }
+
     @Test fun lossAndClosePublishOnePauseAndNeverKeepReassertingTheOldSource() {
         val output = GeelyMediaCardPublisher(app) { true }.also { publisher = it }
         output.update(true, track)

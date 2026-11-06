@@ -30,6 +30,8 @@ internal class GeelyMediaCardPublisher(
     private var active = false
     private var closed = false
     private var nowPlaying = CarPlayNowPlaying()
+    private var coverUrl = ""
+    private var publishedCoverUrl = ""
     private var published: CarPlayNowPlaying? = null
     private var lastPublishedAt = 0L
     @Volatile var stage: String = "IDLE"
@@ -45,12 +47,13 @@ internal class GeelyMediaCardPublisher(
     }
 
     @Synchronized
-    fun update(ownsMediaSource: Boolean, next: CarPlayNowPlaying) {
+    fun update(ownsMediaSource: Boolean, next: CarPlayNowPlaying, nextCoverUrl: String = "") {
         if (closed || failed) return
         if (!supported) { stage = "RECEIVER_UNAVAILABLE"; return }
         val wasActive = active
         active = ownsMediaSource
         nowPlaying = next
+        coverUrl = nextCoverUrl
         if (!active) {
             handler.removeCallbacks(heartbeat)
             if (wasActive) publish(false)
@@ -58,9 +61,10 @@ internal class GeelyMediaCardPublisher(
             return
         }
         val before = published
-        val trackChanged = before != null && (before.title != next.title || before.artist != next.artist)
+        val coverChanged = publishedCoverUrl != coverUrl
+        val trackChanged = before != null && (before.title != next.title || before.artist != next.artist || coverChanged)
         val changed = before == null || before.title != next.title || before.artist != next.artist ||
-            before.playing != next.playing || before.durationMillis != next.durationMillis
+            before.playing != next.playing || before.durationMillis != next.durationMillis || coverChanged
         if (!wasActive || changed || SystemClock.elapsedRealtime() - lastPublishedAt >= INTERVAL_MILLIS) {
             handler.removeCallbacks(heartbeat)
             // The observed receiver protocol refreshes a new track with a state edge first.
@@ -91,9 +95,8 @@ internal class GeelyMediaCardPublisher(
             context.sendBroadcast(Intent(ACTION).setComponent(RECEIVER)
                 .putExtra("RECEIVER_MEDIA_BOOK_NAME", title)
                 .putExtra("RECEIVER_MEDIA_BOOK_AUTHOR_NAME", artist)
-                // Artwork continues through the existing Android MediaSession. Do not expose a
-                // world-readable file or invent a public URL for this firmware-specific receiver.
-                .putExtra("RECEIVER_MEDIA_BOOK_COVERURL", "")
+                // OneOS reads its own media contract; MediaSession artwork alone is not forwarded.
+                .putExtra("RECEIVER_MEDIA_BOOK_COVERURL", coverUrl)
                 .putExtra("RECEIVER_MEDIA_BOOK_ID", trackId)
                 .putExtra("RECEIVER_MEDIA_FRAGMENT_ID", trackId)
                 .putExtra("RECEIVER_MEDIA_FAVORITE_STATUS", false)
@@ -103,6 +106,7 @@ internal class GeelyMediaCardPublisher(
             if (active && announceSource) context.sendBroadcast(Intent(ACTION).setComponent(RECEIVER)
                 .putExtra("RECEIVER_MEDIA_APP_STATUS", true))
             published = nowPlaying
+            publishedCoverUrl = coverUrl
             lastPublishedAt = SystemClock.elapsedRealtime()
             stage = if (active) "PUBLISHED_UNCONFIRMED" else "RELEASED"
             true
