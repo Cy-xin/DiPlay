@@ -1,10 +1,7 @@
 // carlito | Visual layout editing; vehicle controls and OEM implementations stay in GD.
 package com.shilapi.xcertplay
 
-import android.app.AlertDialog
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -56,7 +53,7 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
         selected = savedInstanceState?.getString("selected")?.let { runCatching { ProjectionField.valueOf(it) }.getOrNull() }
             ?: draft.firstOrNull()?.field ?: ProjectionField.NAVIGATION
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = palette.systemBarIconsAreDark
         buildPanel()
         savedInstanceState?.getStringArrayList("geometry_input")?.takeIf { it.size == fields.size }?.let { values ->
             fields.forEachIndexed { index, input -> if (input.isEnabled) input.setText(values[index]) }
@@ -81,7 +78,7 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
     }
 
     private fun buildPanel() {
-        val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true }
+        val scroll = ScrollView(this).apply { background = GlassDesign.backdrop(palette); isFillViewport = true }
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
@@ -108,7 +105,12 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
         val editorWidth = resources.displayMetrics.widthPixels - dp(48)
         val previewHeight = (editorWidth / aspect.coerceIn(0.5f, 16f)).toInt().coerceIn(dp(96), dp(320))
         content.addView(preview, LinearLayout.LayoutParams(-1, previewHeight).apply { topMargin = dp(20) })
-        choices = Spinner(this).apply { minimumHeight = dp(56) }
+        choices = Spinner(this).apply {
+            minimumHeight = dp(56)
+            background = GlassDesign.surface(this@GeelyProjectionEditorActivity, SURFACE, BORDER, GlassDesign.CONTROL_RADIUS_DP)
+            setPopupBackgroundDrawable(GlassDesign.surface(this@GeelyProjectionEditorActivity, SURFACE, BORDER))
+            setPadding(dp(16), 0, dp(16), 0)
+        }
         content.addView(choices, params(16))
         fields = listOf(R.string.projection_x, R.string.projection_y, R.string.projection_width, R.string.projection_height).map { title ->
             val container = column(); container.addView(label(title, 16f))
@@ -116,6 +118,8 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                 textSize = 18f; setTextColor(TEXT); isSingleLine = true; minHeight = dp(56)
                 filters = arrayOf(InputFilter.LengthFilter(8)); contentDescription = getString(title)
+                background = GlassDesign.surface(this@GeelyProjectionEditorActivity, SURFACE, BORDER, GlassDesign.CONTROL_RADIUS_DP)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
             }
             container.addView(input); content.addView(container, params(12)); input
         }
@@ -146,8 +150,13 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
     private fun rebuildChoices() {
         filling = true
         if (draft.none { it.field == selected }) selected = draft.firstOrNull()?.field ?: ProjectionField.NAVIGATION
-        choices.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-            draft.map { getString(it.field.label) })
+        choices.adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
+            draft.map { getString(it.field.label) }) {
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                super.getView(position, convertView, parent).apply { (this as? TextView)?.setTextColor(TEXT) }
+            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                super.getDropDownView(position, convertView, parent).apply { (this as? TextView)?.setTextColor(TEXT) }
+        }
         choices.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -197,7 +206,7 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
         if (!readGeometry()) return
         val available = ProjectionField.entries.filter { value -> draft.none { it.field == value } }
         if (available.isEmpty()) return
-        AlertDialog.Builder(this).setTitle(R.string.projection_add).setItems(available.map { getString(it.label) }.toTypedArray()) { _, index ->
+        appDialogBuilder().setTitle(R.string.projection_add).setItems(available.map { getString(it.label) }.toTypedArray()) { _, index ->
             val field = available[index]
             draft = draft + ProjectionElement(field, 0.05f, 0.1f, 0.25f, 0.4f)
             selected = field; rebuildChoices()
@@ -209,18 +218,18 @@ class GeelyProjectionEditorActivity : ComponentActivity() {
     private fun button(resource: Int, primary: Boolean = false, action: () -> Unit) = Button(this).apply {
         setText(resource); isAllCaps = false; textSize = 17f; minHeight = dp(56)
         setTextColor(if (primary) BG else TEXT)
-        backgroundTintList = ColorStateList.valueOf(if (primary) ACCENT else SURFACE)
+        GlassDesign.styleButton(this, palette, primary)
         setOnClickListener { action() }
     }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     private fun params(top: Int = 0) = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    companion object {
-        private val BG = Color.rgb(12, 17, 27)
-        private val SURFACE = Color.rgb(21, 30, 44)
-        private val ACCENT = Color.rgb(166, 200, 255)
-        private val TEXT = Color.rgb(241, 245, 252)
-        private val MUTED = Color.rgb(168, 182, 202)
-    }
+    private val palette get() = DiPlayPalette.of(resolveAppNightNow())
+    private val BG get() = palette.background
+    private val SURFACE get() = palette.surface
+    private val BORDER get() = palette.outline
+    private val ACCENT get() = palette.accent
+    private val TEXT get() = palette.primaryText
+    private val MUTED get() = palette.secondaryText
 }

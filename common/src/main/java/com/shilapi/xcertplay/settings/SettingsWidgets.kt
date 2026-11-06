@@ -81,8 +81,8 @@ object SettingsWidgets {
             cornerRadius = px(17).toFloat()
             setSize(px(60), px(34))
             setColor(Color.WHITE)
-            // Same 30% track as the platform switch, so the colours match the smaller switches.
-            alpha = (0.3f * 255).roundToInt()
+            // A solid track keeps the state legible over the glass material.
+            alpha = 255
         }
         switch.switchMinWidth = px(60)
         switch.showText = false
@@ -118,7 +118,7 @@ object SettingsWidgets {
             isChecked = checked
             this.contentDescription = contentDescription
             isEnabled = enabled
-            applyLargeSwitchStyle(this, theme.accent, theme.textSecondary, theme.accentTrack, theme.trackOff)
+            applyLargeSwitchStyle(this, Color.WHITE, Color.WHITE, theme.accentTrack, theme.trackOff)
             if (!theme.isOverlay) minHeight = theme.dp(context, 56)
             setOnCheckedChangeListener { _, isChecked -> onChanged(isChecked) }
         }

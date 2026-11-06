@@ -15,33 +15,20 @@ import kotlin.math.pow
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33], manifest = Config.NONE)
 class DiPlayPaletteTest {
-    @Test fun darkPalettePreservesTheExistingProductionColors() {
-        val palette = DiPlayPalette.DARK
-        assertEquals(Color.rgb(12, 17, 27), palette.background)
-        assertEquals(Color.rgb(21, 30, 44), palette.surface)
-        assertEquals(Color.rgb(31, 43, 61), palette.button)
-        assertEquals(Color.rgb(42, 56, 75), palette.outline)
-        assertEquals(Color.rgb(24, 54, 92), palette.railSelected)
-        assertEquals(Color.rgb(42, 82, 130), palette.railSelectedOutline)
-        assertEquals(Color.rgb(241, 245, 252), palette.primaryText)
-        assertEquals(Color.rgb(168, 182, 202), palette.secondaryText)
-        assertEquals(Color.rgb(166, 200, 255), palette.accent)
-        assertEquals(Color.rgb(255, 196, 128), palette.warning)
-        assertEquals(Color.rgb(127, 205, 154), palette.success)
-        assertEquals(Color.rgb(190, 45, 45), palette.danger)
-        assertEquals(0x336F9FD9, palette.ripple)
-        assertFalse(palette.systemBarIconsAreDark)
+    @Test fun glassThemesKeepNightSurfacesDarkAndDaySurfacesLight() {
+        assertTrue(luminance(DiPlayPalette.DARK.background) < .02)
+        assertTrue(luminance(DiPlayPalette.DARK.surface) > luminance(DiPlayPalette.DARK.background))
+        assertTrue(luminance(DiPlayPalette.LIGHT.background) > .8)
+        assertFalse(DiPlayPalette.DARK.systemBarIconsAreDark)
+        assertTrue(DiPlayPalette.LIGHT.systemBarIconsAreDark)
     }
 
-    @Test fun waitingScreenDelegationKeepsItsExactLightAndDarkColors() {
-        assertEquals(
-            WaitingScreenColors(Color.rgb(12, 17, 27), Color.rgb(241, 245, 252), Color.rgb(168, 182, 202)),
-            WaitingScreenColors.of(night = true),
-        )
-        assertEquals(
-            WaitingScreenColors(Color.rgb(233, 238, 246), Color.rgb(28, 28, 30), Color.rgb(90, 100, 116)),
-            WaitingScreenColors.of(night = false),
-        )
+    @Test fun waitingScreenUsesTheResolvedSemanticPalette() {
+        for (night in listOf(false, true)) {
+            val palette = DiPlayPalette.of(night)
+            assertEquals(WaitingScreenColors(palette.background, palette.primaryText, palette.secondaryText),
+                WaitingScreenColors.of(night))
+        }
     }
 
     @Test fun semanticRolesMeetTheirWcagContrastTargets() {

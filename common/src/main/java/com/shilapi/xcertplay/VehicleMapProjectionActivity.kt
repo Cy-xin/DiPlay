@@ -1,7 +1,6 @@
 // carlito | Generic map display selection and a visual/numeric viewport editor.
 package com.shilapi.xcertplay
 
-import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -30,6 +29,7 @@ import kotlin.math.roundToInt
 
 class VehicleMapProjectionActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: Context) = super.attachBaseContext(AppLocale.wrap(newBase))
+    private val palette get() = DiPlayPalette.of(resolveAppNightNow())
     private lateinit var inputs: List<EditText>
     private lateinit var preview: MapViewportPreview
     private lateinit var target: Button
@@ -37,32 +37,32 @@ class VehicleMapProjectionActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(24)) }
-        val scroll = ScrollView(this).apply { addView(content); setBackgroundColor(Color.rgb(12, 17, 27)) }
+        val scroll = ScrollView(this).apply { addView(content); background = GlassDesign.backdrop(palette) }
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom); insets
         }
-        fun text(resource: Int, size: Float = 16f) = TextView(this).apply { setText(resource); textSize = size; setTextColor(Color.WHITE) }
-        fun button(resource: Int, action: () -> Unit) = Button(this).apply { setText(resource); isAllCaps = false; minHeight = dp(56); setOnClickListener { action() } }
+        fun text(resource: Int, size: Float = 16f) = TextView(this).apply { setText(resource); textSize = size; setTextColor(palette.primaryText) }
+        fun button(resource: Int, action: () -> Unit) = Button(this).apply { setText(resource); isAllCaps = false; minHeight = dp(56); GlassDesign.styleButton(this, palette); setOnClickListener { action() } }
         content.addView(text(R.string.vehicle_map_title, 26f))
         content.addView(text(R.string.vehicle_map_setup_hint), params())
         content.addView(Switch(this).apply {
-            setText(R.string.vehicle_map_enabled); setTextColor(Color.WHITE); minHeight = dp(56)
+            setText(R.string.vehicle_map_enabled); setTextColor(palette.primaryText); minHeight = dp(56)
             isChecked = VehicleMapSettings.enabled(this@VehicleMapProjectionActivity)
             setOnCheckedChangeListener { _, value -> VehicleMapSettings.setEnabled(this@VehicleMapProjectionActivity, value) }
         }, params())
         target = button(R.string.geely_hud_projection_screen) {
             val displays = GeelyHudProjection.availableDisplays(this)
             if (displays.isEmpty()) {
-                AlertDialog.Builder(this).setMessage(R.string.geely_hud_no_projection_display).setPositiveButton(R.string.close, null).show()
-            } else AlertDialog.Builder(this).setTitle(R.string.geely_hud_projection_screen)
+                appDialogBuilder().setMessage(R.string.geely_hud_no_projection_display).setPositiveButton(R.string.close, null).show()
+            } else appDialogBuilder().setTitle(R.string.geely_hud_projection_screen)
                 .setItems(displays.map { "${it.name} · ${it.width} × ${it.height}" }.toTypedArray()) { _, index ->
                     VehicleMapSettings.select(this, displays[index]); updateTarget(); fillGeometry()
                 }.setNegativeButton(R.string.cancel, null).show()
         }
         content.addView(target, params())
         content.addView(Switch(this).apply {
-            setText(R.string.vehicle_map_native_mode); setTextColor(Color.WHITE); minHeight = dp(56)
+            setText(R.string.vehicle_map_native_mode); setTextColor(palette.primaryText); minHeight = dp(56)
             isChecked = VehicleMapSettings.vehicleMode(this@VehicleMapProjectionActivity)
             setOnCheckedChangeListener { _, value -> VehicleMapSettings.setVehicleMode(this@VehicleMapProjectionActivity, value) }
         }, params())
@@ -77,7 +77,9 @@ class VehicleMapProjectionActivity : ComponentActivity() {
         inputs = listOf(R.string.vehicle_map_canvas_width, R.string.vehicle_map_canvas_height, R.string.vehicle_map_visible_height).mapIndexed { index, resource ->
             content.addView(text(resource), params())
             EditText(this).apply {
-                inputType = InputType.TYPE_CLASS_NUMBER; setTextColor(Color.WHITE); textSize = 18f
+                inputType = InputType.TYPE_CLASS_NUMBER; setTextColor(palette.primaryText); textSize = 18f
+                background = GlassDesign.surface(this@VehicleMapProjectionActivity, palette.surface, palette.outline, GlassDesign.CONTROL_RADIUS_DP)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
                 setSingleLine(); minHeight = dp(56); filters = arrayOf(InputFilter.LengthFilter(4))
                 contentDescription = getString(resource); setText(values[index].toString())
                 content.addView(this, params())

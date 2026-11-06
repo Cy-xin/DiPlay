@@ -61,16 +61,16 @@ class SettingsWidgetsTest {
         }
     }
 
-    @Test fun overlayKeepsTheExistingGreenControlsAndLabelMetrics() {
+    @Test fun overlayUsesTheSharedGlassPaletteAndKeepsLabelMetrics() {
         val row = ConnectionSettingsSection.createWirelessCarPlayRow(context, true, onChanged = {})
         val label = (row.rowView as ViewGroup).getChildAt(0) as TextView
         assertEquals(20f, label.textSize / context.resources.displayMetrics.scaledDensity, 0.01f)
         assertFalse(label.includeFontPadding)
-        assertEquals(Color.rgb(170, 180, 190), label.currentTextColor)
-        assertEquals(Color.rgb(127, 205, 154), row.switch.thumbTintList!!.getColorForState(
+        assertEquals(SettingsTheme.OVERLAY.textSecondary, label.currentTextColor)
+        assertEquals(Color.WHITE, row.switch.thumbTintList!!.getColorForState(
             intArrayOf(android.R.attr.state_enabled, android.R.attr.state_checked), 0))
         val heading = SettingsWidgets.createCategoryHeader(context, "Heading")
-        assertEquals(Color.rgb(127, 205, 154), heading.currentTextColor)
+        assertEquals(SettingsTheme.OVERLAY.accent, heading.currentTextColor)
         assertFalse(heading.includeFontPadding)
     }
 
@@ -105,7 +105,7 @@ class SettingsWidgetsTest {
         assertEquals(DiPlayPalette.LIGHT.secondaryText, texts[1].currentTextColor)
         assertEquals(DiPlayPalette.LIGHT.trackOff, row.switch.trackTintList!!.getColorForState(intArrayOf(android.R.attr.state_enabled), 0))
         assertEquals(
-            DiPlayPalette.LIGHT.accent,
+            Color.WHITE,
             row.switch.thumbTintList!!.getColorForState(intArrayOf(android.R.attr.state_enabled, android.R.attr.state_checked), 0),
         )
         assertEquals(DiPlayPalette.LIGHT.ripple, theme.ripple)
@@ -126,7 +126,7 @@ class SettingsWidgetsTest {
 
         assertEquals(DiPlayPalette.LIGHT.overlaySecondaryText, label.currentTextColor)
         assertEquals(
-            DiPlayPalette.LIGHT.overlayAccent,
+            Color.WHITE,
             row.switch.thumbTintList!!.getColorForState(intArrayOf(android.R.attr.state_enabled, android.R.attr.state_checked), 0),
         )
         assertEquals(

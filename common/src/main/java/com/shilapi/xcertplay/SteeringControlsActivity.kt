@@ -2,11 +2,7 @@ package com.shilapi.xcertplay
 
 import android.app.AlertDialog
 import android.content.Context
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -81,7 +77,7 @@ class SteeringControlsActivity : ComponentActivity() {
         }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = BG; window.navigationBarColor = BG
-        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = false
+        WindowInsetsControllerCompat(window, window.decorView).isAppearanceLightStatusBars = palette.systemBarIconsAreDark
         buildPanel()
         SteeringProfiles.scheduleUpload(this)
     }
@@ -104,7 +100,7 @@ class SteeringControlsActivity : ComponentActivity() {
     }
 
     private fun buildPanel() {
-        val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true }
+        val scroll = ScrollView(this).apply { background = GlassDesign.backdrop(palette); isFillViewport = true }
         ViewCompat.setOnApplyWindowInsetsListener(scroll) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
@@ -190,7 +186,7 @@ class SteeringControlsActivity : ComponentActivity() {
         if (developer) {
             content.addView(label(getString(R.string.steering_log_permission, packageName), 14f, MUTED), params(8))
             content.addView(button(getString(R.string.steering_log_match)) {
-                AlertDialog.Builder(this).setTitle(R.string.steering_log_match)
+                appDialogBuilder().setTitle(R.string.steering_log_match)
                     .setItems(SteeringBinding.operations.map(::operationName).toTypedArray()) { _, index ->
                         editLogRule(SteeringBinding.operations[index])
                     }.setNegativeButton(R.string.cancel, null).show()
@@ -339,7 +335,7 @@ class SteeringControlsActivity : ComponentActivity() {
             isSingleLine = false; minLines = 3; filters = arrayOf(InputFilter.LengthFilter(646))
         }
         form.addView(fragments, params(6))
-        val dialog = AlertDialog.Builder(this).setTitle(operationName(operation)).setView(form)
+        val dialog = appDialogBuilder().setTitle(operationName(operation)).setView(form)
             .setPositiveButton(R.string.steering_identify, null).setNegativeButton(R.string.cancel, null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -378,23 +374,22 @@ class SteeringControlsActivity : ComponentActivity() {
     private fun button(value: String, primary: Boolean = false, click: () -> Unit) = Button(this).apply {
         text = value; isAllCaps = false; textSize = 17f; minHeight = dp(56)
         setTextColor(if (primary) BG else TEXT); setPadding(dp(14), dp(8), dp(14), dp(8))
-        background = RippleDrawable(ColorStateList.valueOf(0x336F9FD9), rounded(if (primary) ACCENT else SURFACE), null)
+        GlassDesign.styleButton(this, palette, primary)
         setOnClickListener { click() }
     }
     private fun Button.enable(value: Boolean) { isEnabled = value; alpha = if (value) 1f else 0.45f }
-    private fun rounded(color: Int) = GradientDrawable().apply { setColor(color); cornerRadius = dp(16).toFloat(); setStroke(dp(1), BORDER) }
+    private fun rounded(color: Int) = GlassDesign.surface(this, color, BORDER, GlassDesign.CONTROL_RADIUS_DP)
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
     private fun params(top: Int = 0) = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(top) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun toast(resource: Int) { Toast.makeText(this, resource, Toast.LENGTH_LONG).show() }
 
-    companion object {
-        private val BG = Color.rgb(12, 17, 27)
-        private val SURFACE = Color.rgb(21, 30, 44)
-        private val BORDER = Color.rgb(42, 56, 75)
-        private val ACCENT = Color.rgb(166, 200, 255)
-        private val TEXT = Color.rgb(241, 245, 252)
-        private val MUTED = Color.rgb(168, 182, 202)
-    }
+    private val palette get() = DiPlayPalette.of(resolveAppNightNow())
+    private val BG get() = palette.background
+    private val SURFACE get() = palette.surface
+    private val BORDER get() = palette.outline
+    private val ACCENT get() = palette.accent
+    private val TEXT get() = palette.primaryText
+    private val MUTED get() = palette.secondaryText
 }

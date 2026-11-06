@@ -751,12 +751,13 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             "settings" -> !SettingsLayoutPreferences.isActive(this)
             else -> true
         }
-        val scroll = ScrollView(this).apply { setBackgroundColor(BG); isFillViewport = true; clipToPadding = false }
+        val scroll = ScrollView(this).apply { background = GlassDesign.backdrop(palette); isFillViewport = true; clipToPadding = false }
         rootScroll = scroll
         val content = column()
         scroll.addView(content)
         val header = if (page == "settings") settingsHeader(compact) else standardHeader(compact)
         val root: View = if (page == "settings" && isExpandedSettingsLayout) {
+            scroll.background = null
             content.setPadding(0, 0, 0, dp(32))
             settingsCategoryContent(content)
             expandedSettingsShell(header, scroll)
@@ -984,14 +985,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         fun homeButton(title: String, primary: Boolean, click: () -> Unit) = button(title, primary, click)
         val wide = resources.configuration.screenWidthDp >= 850
         val body = column()
-        val left = column()
-        if (!compact) {
-            left.addView(label(getString(R.string.your_phone_your_drive), 12, ACCENT, true).apply { letterSpacing = .16f })
-            left.addView(label(getString(R.string.a_familiar_drive), if (wide) 42 else 36, TEXT, true).apply { setPadding(0, dp(12), 0, dp(10)) })
-            left.addView(label(getString(R.string.your_maps_music_and_conversations_carplay_right_here_on_yo), 19, MUTED))
-        }
         val card = card()
-        homeCardTitle = label(getString(R.string.wireless_carplay), 12, ACCENT, true).apply { letterSpacing = .12f }
+        homeCardTitle = label(getString(R.string.wireless_carplay), 16, ACCENT, true)
         card.addView(homeCardTitle)
         status = label(getString(R.string.ready_when_you_are), 24, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
@@ -1038,23 +1033,14 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             CarPlayBackgroundSession.stop { runOnUiThread { refreshStatus() } }
         }.apply { visibility = View.GONE }
         card.addView(disconnectButton, matchButton(if (compact) CONTROL_GAP_DP else 16, if (compact) 46 else 56))
-        val right = column().apply { gravity = Gravity.CENTER_HORIZONTAL }
-        val logo = ImageView(this).apply {
-            setImageResource(R.drawable.ic_carplay)
-            contentDescription = getString(R.string.carplay_icon)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-        }
-        val branding = column().apply {
-            gravity = Gravity.CENTER
-            addView(logo, LinearLayout.LayoutParams(dp(96), dp(96)))
-        }
+        val right = card().apply { gravity = Gravity.CENTER_HORIZONTAL }
         right.addView(homeButton(getString(R.string.connect_with_usb), false) { connect(false) }, matchButton(height = if (compact) 54 else 68))
         if (!compact) right.addView(label(getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(10), dp(8), dp(24)) })
         else right.addView(space(16))
         right.addView(homeButton(getString(R.string.settings), false) { page = "settings"; render() }, matchButton(height = if (compact) 54 else 68))
         if (!compact) right.addView(label(getString(R.string.make_diplay_feel_right_for_your_car), 14, MUTED).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(24)) })
         else right.addView(space(12))
-        right.addView(label(getString(R.string.home_public_preview, version()), 12, MUTED).apply { letterSpacing = .08f })
+        right.addView(label(getString(R.string.home_public_preview, version()), 12, MUTED))
         availableUpdate?.let { release ->
             val message = getString(R.string.update_available_home)
             val tint = { alpha: Int -> (WARNING and 0x00FFFFFF) or (alpha shl 24) }
@@ -1079,40 +1065,16 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 setOnClickListener { openAvailableUpdate(release) }
             }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
-        if (compact && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            val compactRight = column().apply {
-                addView(space(8))
-                addView(branding)
-                addView(space(24))
-                addView(right)
-            }
+        if (wide || compact && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             body.addView(row().apply {
                 gravity = Gravity.TOP
                 addView(card, LinearLayout.LayoutParams(0, -2, 1.6f))
-                addView(space(16), LinearLayout.LayoutParams(dp(16), 1))
-                addView(compactRight, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(space(GlassDesign.SECTION_GAP_DP), LinearLayout.LayoutParams(dp(GlassDesign.SECTION_GAP_DP), 1))
+                addView(right, LinearLayout.LayoutParams(0, -2, 1f))
             })
-        } else if (!compact && wide) {
-            // Both rows share column widths. The USB button starts at the wireless
-            // card's top edge, independently of hero wrapping or font scaling.
-            fun columns(first: View, second: View, stretchSecond: Boolean = false) = row().apply {
-                gravity = Gravity.TOP
-                addView(first, LinearLayout.LayoutParams(0, -2, 1.6f))
-                addView(space(40), LinearLayout.LayoutParams(dp(40), 1))
-                addView(second, LinearLayout.LayoutParams(0, if (stretchSecond) -1 else -2, 1f))
-            }
-            body.addView(columns(left, branding, true))
-            body.addView(space(26))
-            body.addView(columns(card, right))
         } else {
-            if (!compact) {
-                body.addView(left)
-                body.addView(space(26))
-            }
             body.addView(card)
-            body.addView(space(26))
-            body.addView(branding)
-            body.addView(space(24))
+            body.addView(space(GlassDesign.SECTION_GAP_DP))
             body.addView(right)
         }
         setupError?.let { body.addView(label(it, 16, WARNING).apply { setPadding(0, dp(16), 0, 0) }) }
@@ -1121,7 +1083,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     // Only the category scrolls, so the rail keeps showing where the driver is.
     private fun expandedSettingsShell(header: View, categoryScroll: ScrollView): LinearLayout = column().apply {
-        setBackgroundColor(BG)
+        background = GlassDesign.backdrop(palette)
         setPadding(dp(32), dp(24), dp(32), 0)
         addView(header)
         addView(space(24))
@@ -1163,11 +1125,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             contentDescription = getString(R.string.settings_open_category, title)
             background = android.graphics.drawable.RippleDrawable(
                 ColorStateList.valueOf(RIPPLE),
-                GradientDrawable().apply {
-                    setColor(if (selected) RAIL_SELECTED else Color.TRANSPARENT)
-                    cornerRadius = dp(12).toFloat()
-                    if (selected) setStroke(dp(1), RAIL_SELECTED_BORDER)
-                },
+                GlassDesign.surface(this@DiPlayActivity,
+                    if (selected) RAIL_SELECTED else Color.TRANSPARENT,
+                    if (selected) RAIL_SELECTED_BORDER else Color.TRANSPARENT,
+                    GlassDesign.CONTROL_RADIUS_DP),
                 null,
             )
             setPadding(dp(8), 0, dp(12), 0)
@@ -6900,7 +6861,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         parent.addView(button, matchButton(0, 60)); parent.addView(space(12))
     }
-    private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(24), dp(24), dp(24), dp(24)) }
+    private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP)); elevation = dp(2).toFloat() }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private class SettingsSearchEditText(context: android.content.Context) : EditText(context) {
@@ -6976,9 +6937,14 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     }
     private fun headerIconSize(compact: Boolean) = dp(if (compact) 20 else 24)
 
-    private fun headerButton(title: String, icon: Int, compact: Boolean, click: () -> Unit) = button(title, false, click).apply {
-        alignVisibleGlyphs = false
-        if (compact) textSize = 16f
+    private fun headerButton(title: String, icon: Int, compact: Boolean, click: () -> Unit) = Button(this).apply {
+        text = title
+        textSize = if (compact) 16f else 18f
+        GlassDesign.styleButton(this, palette)
+        setPadding(dp(16), 0, dp(16), 0)
+        minHeight = 0
+        foreground = buttonFocusRing()
+        setOnClickListener { click() }
         includeFontPadding = false
         setTextColor(TEXT)
         setSingleLine(true)
@@ -6990,27 +6956,15 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         setCompoundDrawablesRelative(drawable, null, null, null)
         compoundDrawablePadding = dp(8)
-        doOnLayout {
-            // Use the same text alignment reference as other buttons in this locale.
-            if (baseline >= 0 && text.isNotEmpty()) {
-                val glyphCentre = textAlignmentCentreY()
-                val drawableCentre = paddingTop + (height - paddingTop - paddingBottom) / 2f
-                val offset = (glyphCentre - drawableCentre).roundToInt()
-                drawable?.setBounds(0, offset, iconSize, iconSize + offset)
-                // Move the aligned icon/text group to the button's visual centre.
-                contentOffsetY = drawableCentre - glyphCentre
-                invalidate()
-            }
-        }
+
     }
 
     private fun layoutCornerRadius(): Float {
-        val compact = isCompactLayout && (page != "settings" || !SettingsLayoutPreferences.isActive(this))
-        return dp(if (compact) 44 else 52) * 20f / 56
+        return dp(GlassDesign.CONTROL_RADIUS_DP).toFloat()
     }
 
     private fun buttonShape(color: Int, stroke: Int, heightPx: Int = 0) = rounded(color, stroke).apply {
-        cornerRadius = if (heightPx > 0) minOf(dp(24).toFloat(), heightPx * 20f / 56) else layoutCornerRadius()
+        cornerRadius = if (heightPx > 0) minOf(dp(24).toFloat(), heightPx * .36f) else layoutCornerRadius()
     }
 
     private fun buttonFocusRing() = focusRing(
@@ -7124,7 +7078,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         })
     }
 
-    private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply { setColor(color); cornerRadius = layoutCornerRadius() * 1.35f; setStroke(dp(1), stroke) }
+    private fun rounded(color: Int, stroke: Int) = GlassDesign.surface(this, color, stroke)
     private fun matchButton(top: Int = 0, height: Int = 68) = LinearLayout.LayoutParams(-1, dp(height)).apply { topMargin = dp(top) }
     private fun space(height: Int) = View(this).apply { layoutParams = LinearLayout.LayoutParams(1, dp(height)); tag = SPACER }
 
@@ -7364,7 +7318,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         private const val GROUP_GAP_DP = 20
         private const val NOTE_LINE_GAP_DP = 4
         private const val NOTE_ATTACH_GAP_DP = 6
-        private const val SETTINGS_BLOCK_GAP_DP = 16
+        private const val SETTINGS_BLOCK_GAP_DP = GlassDesign.SECTION_GAP_DP
         /** The inset a control uses for its text, so a note below it lines up instead of starting at 0. */
         private const val SETTINGS_CONTROL_INSET_DP = 16
         /** Gap under an explanatory note, so it never touches the next control. */

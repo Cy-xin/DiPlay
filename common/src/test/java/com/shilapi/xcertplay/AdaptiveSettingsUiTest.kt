@@ -128,7 +128,7 @@ class AdaptiveSettingsUiTest {
         val scroll = ReflectionHelpers.getField<ScrollView>(screen, "rootScroll")
 
         assertSame(DiPlayPalette.LIGHT, palette)
-        assertEquals(DiPlayPalette.LIGHT.background, (scroll.background as ColorDrawable).color)
+        assertEquals(DiPlayPalette.LIGHT.background, canvasBaseColor(screen))
         assertEquals(
             DiPlayPalette.LIGHT.background,
             (screen.window.decorView.background as ColorDrawable).color,
@@ -168,7 +168,7 @@ class AdaptiveSettingsUiTest {
 
         assertSame(DiPlayPalette.DARK, ReflectionHelpers.getField<DiPlayPalette>(screen, "palette"))
         val scroll = ReflectionHelpers.getField<ScrollView>(screen, "rootScroll")
-        assertEquals(DiPlayPalette.DARK.background, (scroll.background as ColorDrawable).color)
+        assertEquals(DiPlayPalette.DARK.background, canvasBaseColor(screen))
     }
 
     @Test fun hostAppearancePublishedOffMainRepaintsOnMain() {
@@ -1262,7 +1262,7 @@ class AdaptiveSettingsUiTest {
         val categories = about.parent as LinearLayout
         assertEquals(categories.indexOfChild(about) + 1, categories.indexOfChild(diagnostics))
         assertEquals(categories.indexOfChild(diagnostics) + 1, categories.indexOfChild(advanced))
-        val gap = Math.round(16 * screen.resources.displayMetrics.density)
+        val gap = Math.round(GlassDesign.SECTION_GAP_DP * screen.resources.displayMetrics.density)
         assertEquals(gap, (diagnostics.layoutParams as LinearLayout.LayoutParams).bottomMargin)
         assertEquals(gap, (advanced.layoutParams as LinearLayout.LayoutParams).bottomMargin)
     }
@@ -1303,6 +1303,13 @@ class AdaptiveSettingsUiTest {
         assertFalse(texts(screen).any { it.text == screen.getString(R.string.save_diagnostic_report) })
         screen.onBackPressedDispatcher.onBackPressed()
         assertTrue(texts(screen).any { it.text == screen.getString(R.string.save_diagnostic_report) })
+    }
+
+    private fun canvasBaseColor(screen: DiPlayActivity): Int {
+        val scroll = ReflectionHelpers.getField<ScrollView>(screen, "rootScroll")
+        val root = screen.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
+        val background = scroll.background ?: root.background
+        return (background as android.graphics.drawable.GradientDrawable).color!!.defaultColor
     }
 
     private fun openSettings(): DiPlayActivity = Robolectric.buildActivity(

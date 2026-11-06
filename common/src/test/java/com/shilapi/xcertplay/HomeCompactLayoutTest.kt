@@ -72,8 +72,8 @@ class HomeCompactLayoutTest {
         val activity = Robolectric.buildActivity(DiPlayActivity::class.java).setup().get()
         shadowOf(activity).setInMultiWindowMode(multiWindow)
         ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
-        val hero = activity.getString(R.string.a_familiar_drive)
-        return descendants(activity.window.decorView).filterIsInstance<TextView>().none { it.text == hero }
+        val detail = activity.getString(R.string.plug_your_iphone_into_a_usb_data_port_allow_carplay_when_y)
+        return descendants(activity.window.decorView).filterIsInstance<TextView>().none { it.text == detail }
     }
 
     private fun descendants(view: View): Sequence<View> = sequence {
