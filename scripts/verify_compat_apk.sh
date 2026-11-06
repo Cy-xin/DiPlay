@@ -59,6 +59,14 @@ else
   fail "applicationId is '$actual_package', expected '$EXPECTED_PACKAGE' (a .hudtest suffix makes the package inert)"
 fi
 
+# The debug manifest must not leak its HUD test label into the vehicle build.
+actual_label="$("$AAPT2" dump badging "$APK" 2>/dev/null | sed -n "s/^application-label:'\\([^']*\\)'.*/\\1/p")"
+if [[ "$actual_label" == "DiPlay Geely" ]]; then
+  pass "application label is DiPlay Geely"
+else
+  fail "application label is '$actual_label', expected 'DiPlay Geely'"
+fi
+
 # OneOS's editable side dock rejects every application with FLAG_DEBUGGABLE.
 if grep -q 'android:debuggable(0x0101000f)=true' "$manifest"; then
   fail "application is debuggable (OneOS hides it from side-dock candidates)"

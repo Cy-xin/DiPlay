@@ -29,7 +29,7 @@ android {
         minSdk = 24
         targetSdk = 37
         // carlito | Fork installs must upgrade from Geely 0.2.16 (code 41) while matching upstream's name.
-        versionCode = if (geelyOemCompatibility) 45 else 44
+        versionCode = if (geelyOemCompatibility) 46 else 44
         versionName = if (geelyOemCompatibility) "0.2.22-geely" else "0.2.22"
         manifestPlaceholders["geelyOemCompatEnabled"] = geelyOemCompatibility.toString()
     }
@@ -55,6 +55,7 @@ android {
             // allow-list has no .hudtest entry, so the suffix would produce an inert package.
             // OneOS also excludes FLAG_DEBUGGABLE apps from the editable side-dock list.
             // Keep the existing signing config so the compatibility APK upgrades in place.
+            manifestPlaceholders["debugAppLabel"] = if (geelyOemCompatibility) "DiPlay Geely" else "DiPlay HUD Test"
             isDebuggable = !geelyOemCompatibility
             if (!geelyOemCompatibility) {
                 applicationIdSuffix = ".hudtest"
