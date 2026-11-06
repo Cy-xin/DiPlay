@@ -59,6 +59,13 @@ else
   fail "applicationId is '$actual_package', expected '$EXPECTED_PACKAGE' (a .hudtest suffix makes the package inert)"
 fi
 
+# OneOS's editable side dock rejects every application with FLAG_DEBUGGABLE.
+if grep -q 'android:debuggable(0x0101000f)=true' "$manifest"; then
+  fail "application is debuggable (OneOS hides it from side-dock candidates)"
+else
+  pass "application is not debuggable"
+fi
+
 has_attr "$RECEIVER" enabled true && pass "MediaControlReceiver enabled" || fail "MediaControlReceiver is not enabled"
 has_attr "$RECEIVER" exported true && pass "MediaControlReceiver exported" || fail "MediaControlReceiver is not exported"
 has_attr "$ACTIVITY" enabled true && pass "TransparentActivity enabled" || fail "TransparentActivity is not enabled"

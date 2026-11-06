@@ -28,7 +28,9 @@ DIPLAY_AUTH_ASSETS_DIR=/absolute/path/to/runtime-assets \
 
 `DIPLAY_AUTH_ASSETS_DIR` 需包含 `offline-mfi/identity.pk8` 与 `offline-mfi/certificate.p7b`。没有认证资产的构建装到车上仍可入卡、可上报，但无法与 iPhone 建立 CarPlay 会话。
 
-开启属性后 `applicationId` 变为 `io.dushu.car`，debug 变体**不再**追加 `.hudtest` 后缀——该后缀会让包名不在原车名单内，得到一个装了也没用的包。`versionName` 追加 `-geely` 以便区分。
+开启属性后 `applicationId` 变为 `io.dushu.car`，debug 变体**不再**追加 `.hudtest` 后缀——该后缀会让包名不在原车名单内，得到一个装了也没用的包。`versionName` 追加 `-geely` 以便区分。兼容构建的 versionCode 为 44，最终 `debuggable=false`，即使入口任务仍叫 `assembleStandaloneDebug`。签名沿用 debug 构建配置，以便同签名覆盖既有车上测试包；这并不等同于正式发布签名。
+
+侧边栏编辑器会排除带 `FLAG_DEBUGGABLE` 的应用，因此兼容构建必须关闭此标记。非调试 APK 不能通过 `adb shell run-as io.dushu.car` 读取私有目录，后续诊断使用应用内诊断导出或车机允许的日志接口。
 
 ## 校验
 
@@ -36,7 +38,7 @@ DIPLAY_AUTH_ASSETS_DIR=/absolute/path/to/runtime-assets \
 scripts/verify_compat_apk.sh <path-to-apk>
 ```
 
-脚本校验五项并要求全部通过：包名精确等于 `io.dushu.car`、两个组件 `enabled` 且 `exported`、两份认证资产存在。任一项不符即返回非零，可接入 CI。
+脚本要求以下检查全部通过：包名精确等于 `io.dushu.car`、应用不可调试、两个组件 `enabled` 且 `exported`、两份认证资产存在。任一项不符即返回非零，可接入 CI。
 
 ## 代码约束（来自实车实测，不是推断）
 
