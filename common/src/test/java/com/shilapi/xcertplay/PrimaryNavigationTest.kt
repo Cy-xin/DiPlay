@@ -40,6 +40,29 @@ class PrimaryNavigationTest {
         } finally { activity.finish() }
     }
 
+    @Test fun commonShortcutsReturnToTheirOriginatingTab() {
+        val activity = Robolectric.buildActivity(DiPlayActivity::class.java).get()
+        activity.setTheme(android.R.style.Theme_Material_NoActionBar)
+        try {
+            for (origin in listOf("home", "vehicle")) {
+                for ((title, destination) in listOf(R.string.connection to "connection", R.string.settings_quick_settings to "quick-settings")) {
+                    ReflectionHelpers.setField(activity, "page", origin)
+                    ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
+                    descendants(activity.window.decorView).single {
+                        it.contentDescription == activity.getString(title)
+                    }.performClick()
+                    assertEquals(destination, ReflectionHelpers.getField<String>(activity, "page"))
+                    assertTrue(activity.window.decorView.findViewWithTag<View>("primary-navigation:$origin").isSelected)
+                    ReflectionHelpers.callInstanceMethod<Unit>(activity, "navigateBack")
+                    assertEquals(origin, ReflectionHelpers.getField<String>(activity, "page"))
+                }
+                assertEquals(1, descendants(activity.window.decorView).count {
+                    it.contentDescription == activity.getString(R.string.open_car_hotspot_settings)
+                })
+            }
+        } finally { activity.finish() }
+    }
+
     private fun descendants(view: View): Sequence<View> = sequence {
         yield(view)
         if (view is ViewGroup) for (i in 0 until view.childCount) yieldAll(descendants(view.getChildAt(i)))

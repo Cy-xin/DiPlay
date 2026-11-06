@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">Veicolo</string>
   <string name="primary_nav_settings">Impostazioni</string>
-  <string name="vehicle_hub_subtitle">Quadro strumenti e comandi al volante.</string>
+  <string name="vehicle_hub_subtitle">Connessione, hotspot e quadro strumenti.</string>
   <string name="vehicle_hub_projection_hint">Scegli lo schermo e l’area della mappa.</string>
   <string name="vehicle_hub_layout_hint">Regola il contenuto di HUD e quadro strumenti.</string>
   <string name="vehicle_hub_keys_hint">Identifica, assegna e prova i pulsanti.</string>

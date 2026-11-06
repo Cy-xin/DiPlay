@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">차량</string>
   <string name="primary_nav_settings">설정</string>
-  <string name="vehicle_hub_subtitle">계기판 표시 및 스티어링 휠 제어</string>
+  <string name="vehicle_hub_subtitle">연결, 핫스팟 및 계기판 제어</string>
   <string name="vehicle_hub_projection_hint">화면과 지도 표시 영역 선택</string>
   <string name="vehicle_hub_layout_hint">HUD 및 계기판 콘텐츠 조정</string>
   <string name="vehicle_hub_keys_hint">버튼 식별, 지정 및 테스트</string>

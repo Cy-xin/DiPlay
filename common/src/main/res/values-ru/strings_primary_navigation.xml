@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">Автомобиль</string>
   <string name="primary_nav_settings">Настройки</string>
-  <string name="vehicle_hub_subtitle">Приборная панель и кнопки руля.</string>
+  <string name="vehicle_hub_subtitle">Подключение, точка доступа и приборная панель.</string>
   <string name="vehicle_hub_projection_hint">Выберите экран и область карты.</string>
   <string name="vehicle_hub_layout_hint">Настройте содержимое HUD и панели.</string>
   <string name="vehicle_hub_keys_hint">Определение, назначение и проверка кнопок.</string>

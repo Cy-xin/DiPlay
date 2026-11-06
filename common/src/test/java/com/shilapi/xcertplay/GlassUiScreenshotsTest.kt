@@ -29,7 +29,7 @@ import org.robolectric.util.ReflectionHelpers
 class GlassUiScreenshotsTest {
     @Test fun capturesHomeSettingsAndSetupInBothAppearances() {
         for (night in listOf(false, true)) {
-            for (page in listOf("home", "vehicle", "settings", "connection", "backup")) {
+            for (page in listOf("home", "vehicle", "settings", "connection", "quick-settings", "backup")) {
                 capture(page, night, 1280, 800, 1.3f, "zh", "${if (night) "dark" else "light"}-$page")
             }
         }

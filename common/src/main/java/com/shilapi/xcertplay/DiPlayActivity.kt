@@ -195,6 +195,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         com.shilapi.xcertplay.hud.BydCarMusicRhythm::checkSupport
     private var settingsCategory = SettingsCategory.OVERVIEW
     private var connectionSettingsReturnCategory: SettingsCategory? = null
+    private var shortcutReturnPage: String? = null
     private var setupStep = SetupGuide.STEP_CAR
     private var setupFromSettings = false
     private var settingsSectionFilter: Set<SettingsSection>? = null
@@ -439,6 +440,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             ?.let { runCatching { SettingsCategory.valueOf(it) }.getOrNull() }
         setupStep = savedInstanceState?.getInt("setup_step") ?: SetupGuide.STEP_CAR
         setupFromSettings = savedInstanceState?.getBoolean("setup_from_settings") ?: false
+        shortcutReturnPage = savedInstanceState?.getString("shortcut_return_page")?.takeIf { it == "home" || it == "vehicle" }
         page = savedInstanceState?.getString("page") ?: requestedPage(intent)
             ?: if (setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
                     DiPlayPreferences.phoneAddress(this) != null)) "setup" else "home"
@@ -463,6 +465,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         connectionSettingsReturnCategory = null
+        shortcutReturnPage = null
         // CarPlay runs in its own task, so the launcher icon resumes this one. Settings opened from
         // CarPlay carry a "page" extra, which isLauncherIntent rejects.
         if (isLauncherIntent(intent) && CarPlayBackgroundSession.hasSession()) {
@@ -510,6 +513,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         reportIssueDescription = reportIssueInput?.text?.toString() ?: reportIssueDescription
         outState.putString("report_issue_description", reportIssueDescription)
         outState.putString("page", page)
+        shortcutReturnPage?.let { outState.putString("shortcut_return_page", it) }
         outState.putString("settings_category", settingsCategory.name)
         connectionSettingsReturnCategory?.let { outState.putString("connection_settings_return_category", it.name) }
         outState.putBoolean("pending_car_hotspot", pendingCarHotspotSetup)
@@ -770,7 +774,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 compact -> 8
                 else -> 24
             }))
-            if (page == "settings") content.addView(reconnectBar(), LinearLayout.LayoutParams(-1, -2).apply {
+            if (page == "settings" || page == "quick-settings") content.addView(reconnectBar(), LinearLayout.LayoutParams(-1, -2).apply {
                 bottomMargin = dp(SETTINGS_BLOCK_GAP_DP)
             })
             when (page) {
@@ -778,6 +782,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 "setup" -> setupGuide(content)
                 "settings" -> settingsCategoryContent(content)
                 "backup" -> backup(content)
+                "quick-settings" -> {
+                    content.addView(label(getString(R.string.settings_quick_settings), 26, TEXT, true))
+                    content.addView(space(GlassDesign.SECTION_GAP_DP))
+                    content.addView(quickSettingsCard())
+                }
                 "vehicle" -> vehicleHub(content)
                 "vehicle-hud" -> renderSections(content, setOf(SettingsSection.GEELY_NAVIGATION))
                 "vehicle-keys" -> renderSections(content, setOf(SettingsSection.GEELY_STEERING))
@@ -891,6 +900,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         val returnCategory = connectionSettingsReturnCategory
         when {
+            (page == "connection" || page == "quick-settings") && shortcutReturnPage != null -> {
+                page = shortcutReturnPage!!
+                shortcutReturnPage = null
+                connectionSettingsReturnCategory = null
+            }
             page == "vehicle-hud" || page == "vehicle-keys" -> page = "vehicle"
             page == "vehicle" -> page = "home"
             page == "backup" -> {
@@ -920,6 +934,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     }
 
     private fun openConnectionSetupFromSettings() {
+        shortcutReturnPage = null
         connectionSettingsReturnCategory = settingsCategory
         page = "connection"
         render()
@@ -1003,6 +1018,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         setPadding(dp(GlassDesign.NAV_INSET_DP), dp(GlassDesign.NAV_INSET_DP),
             dp(GlassDesign.NAV_INSET_DP), dp(GlassDesign.NAV_INSET_DP))
         val active = when {
+            page in setOf("connection", "quick-settings") && shortcutReturnPage != null -> shortcutReturnPage!!
             page.startsWith("vehicle") -> "vehicle"
             page in setOf("settings", "backup", "connection", "setup") -> "settings"
             else -> "home"
@@ -1035,6 +1051,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 setOnClickListener {
                     if (page != destination) {
                         connectionSettingsReturnCategory = null
+                        shortcutReturnPage = null
                         page = destination
                         render()
                     }
@@ -1043,7 +1060,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
     }
 
-    private fun quickVehicleLink(title: Int, icon: Int, action: () -> Unit): View = row().apply {
+    private fun shortcutLink(title: Int, icon: Int, action: () -> Unit): View = row().apply {
         gravity = Gravity.CENTER_VERTICAL
         minimumHeight = dp(72)
         isClickable = true; isFocusable = true; contentDescription = getString(title)
@@ -1061,8 +1078,26 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         setOnClickListener { action() }
     }
 
+    private fun connectionShortcuts(): View = column().apply {
+        showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
+        dividerDrawable = GradientDrawable().apply { setColor(BORDER); setSize(1, dp(1)) }
+        fun open(destination: String) {
+            shortcutReturnPage = page.takeIf { it == "home" || it == "vehicle" } ?: "home"
+            connectionSettingsReturnCategory = null
+            page = destination
+            render()
+        }
+        addView(shortcutLink(R.string.connection, R.drawable.ic_dp_connection) { open("connection") })
+        addView(shortcutLink(R.string.open_car_hotspot_settings, R.drawable.ic_dp_connection, ::openCarWifiSettings))
+        addView(shortcutLink(R.string.settings_quick_settings, R.drawable.ic_dp_advanced) { open("quick-settings") })
+    }
+
     private fun vehicleHub(content: LinearLayout) {
         settingsPageTitle(content, getString(R.string.primary_nav_vehicle), getString(R.string.vehicle_hub_subtitle))
+        content.addView(card().apply {
+            addView(label(getString(R.string.home_shortcuts), 22, TEXT, true))
+            addView(connectionShortcuts())
+        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(GlassDesign.SECTION_GAP_DP) })
         fun entry(title: Int, hint: Int, icon: Int, action: () -> Unit): View = card().apply {
             isClickable = true; isFocusable = true
             contentDescription = getString(title)
@@ -1149,20 +1184,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             matchButton(GlassDesign.SECTION_GAP_DP, if (compact) 54 else 68))
         val right = card()
         right.addView(label(getString(R.string.home_shortcuts), 22, TEXT, true))
-        val links = column().apply {
-            showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
-            dividerDrawable = GradientDrawable().apply { setColor(BORDER); setSize(1, dp(1)) }
-            addView(quickVehicleLink(R.string.vehicle_map_title, R.drawable.ic_dp_display) {
-                startActivity(Intent(this@DiPlayActivity, VehicleMapProjectionActivity::class.java))
-            })
-            addView(quickVehicleLink(R.string.projection_editor, R.drawable.ic_dp_navigation) {
-                page = "vehicle-hud"; render()
-            })
-            addView(quickVehicleLink(R.string.steering_identification, R.drawable.ic_dp_car) {
-                page = "vehicle-keys"; render()
-            })
-        }
-        right.addView(links)
+        right.addView(connectionShortcuts())
         right.addView(label(getString(R.string.home_public_preview, version()), 12, MUTED).apply {
             setPadding(0, dp(GlassDesign.SECTION_GAP_DP), 0, 0)
         })

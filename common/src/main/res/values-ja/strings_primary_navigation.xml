@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">車両</string>
   <string name="primary_nav_settings">設定</string>
-  <string name="vehicle_hub_subtitle">メーター表示とステアリング操作</string>
+  <string name="vehicle_hub_subtitle">接続・ホットスポット・メーター操作</string>
   <string name="vehicle_hub_projection_hint">画面と地図の表示範囲を選択</string>
   <string name="vehicle_hub_layout_hint">HUD とメーターの内容を調整</string>
   <string name="vehicle_hub_keys_hint">ボタンの識別・割り当て・テスト</string>

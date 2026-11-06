@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">車機</string>
   <string name="primary_nav_settings">設定</string>
-  <string name="vehicle_hub_subtitle">儀表顯示與方向盤控制</string>
+  <string name="vehicle_hub_subtitle">連線、熱點與儀表控制</string>
   <string name="vehicle_hub_projection_hint">選擇螢幕與地圖顯示區域</string>
   <string name="vehicle_hub_layout_hint">調整 HUD 與儀表內容</string>
   <string name="vehicle_hub_keys_hint">辨識、分配與測試按鍵</string>

@@ -3,7 +3,7 @@
   <string name="primary_nav_carplay">CarPlay</string>
   <string name="primary_nav_vehicle">السيارة</string>
   <string name="primary_nav_settings">الإعدادات</string>
-  <string name="vehicle_hub_subtitle">عرض لوحة العدادات وأزرار المقود.</string>
+  <string name="vehicle_hub_subtitle">الاتصال ونقطة الاتصال والتحكم في العدادات.</string>
   <string name="vehicle_hub_projection_hint">اختر الشاشة ومنطقة الخريطة.</string>
   <string name="vehicle_hub_layout_hint">اضبط محتوى الشاشة الأمامية والعدادات.</string>
   <string name="vehicle_hub_keys_hint">تعرّف على الأزرار وعيّنها واختبرها.</string>

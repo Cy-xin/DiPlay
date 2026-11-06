@@ -102,9 +102,9 @@ class HomeHotspotAccessTest {
         val shown = texts(home)
         assertTrue(shown.toString(), home.getString(R.string.settings_write_settings_missing) in shown)
         assertTrue(shown.toString(), home.getString(R.string.settings_write_settings_allow) in shown)
-        // The ADB sentence and the car settings button belong to BYD units.
+        // The ADB warning stays BYD-only; the common hotspot shortcut is available on every car.
         assertFalse(shown.toString(), home.getString(R.string.hotspot_control_missing) in shown)
-        assertFalse(shown.toString(), home.getString(R.string.open_car_hotspot_settings) in shown)
+        assertTrue(shown.toString(), home.getString(R.string.open_car_hotspot_settings) in shown)
 
         tap(home, R.string.settings_write_settings_allow)
         val opened = shadowOf(home).nextStartedActivity
