@@ -29,8 +29,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // carlito | Fork installs must upgrade from Geely 0.2.16 (code 41) while matching upstream's name.
-        versionCode = if (geelyOemCompatibility) 44 else 43
-        versionName = if (geelyOemCompatibility) "0.2.21-geely" else "0.2.21"
+        versionCode = if (geelyOemCompatibility) 45 else 44
+        versionName = if (geelyOemCompatibility) "0.2.22-geely" else "0.2.22"
         manifestPlaceholders["geelyOemCompatEnabled"] = geelyOemCompatibility.toString()
     }
 

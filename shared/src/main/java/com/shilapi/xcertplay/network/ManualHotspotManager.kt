@@ -8,6 +8,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Looper
 import android.util.Log
+import com.shilapi.xcertplay.orchestration.ConnectionFailureCause
 import com.shilapi.xcertplay.orchestration.ManualHotspotBand
 import com.shilapi.xcertplay.orchestration.ManualHotspotSecurity
 import com.shilapi.xcertplay.transport.Iap2WirelessSecurity
@@ -33,7 +34,7 @@ class ManualHotspotManager(
     security: ManualHotspotSecurity,
     private val onDiagnostic: (String) -> Unit = {},
     private val isCancelled: () -> Boolean = { false },
-    preferredInterface: String? = null,
+    private val preferredInterface: String? = null,
 ) : WirelessHotspotManager {
     private val appContext = context.applicationContext
     private val interfaces = ManualHotspotInterfaces(appContext, onDiagnostic, preferredInterface)
@@ -76,11 +77,19 @@ class ManualHotspotManager(
         val readConfiguration = readApConfiguration()
         val companion = readConfiguration != null &&
             isFiveGhzCompanion(apSsid = readConfiguration.ssid, expectedSsid = expectedSsid)
-        if (readConfiguration != null && readConfiguration.ssid != expectedSsid && !companion) {
-            throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
-                "Manual hotspot SSID does not match the active local AP configuration: " +
-                    "'${readConfiguration.ssid}'",
-            )
+        // Defer a platform AP mismatch until the selected route is known: ECARX can expose
+        // another Android AP whose settings do not describe its factory hotspot.
+        val configurationFailure = try {
+            if (!companion && readConfiguration != null && readConfiguration.ssid != expectedSsid) {
+                throw detailsDiffer(
+                    "Manual hotspot SSID does not match the active local AP configuration: " +
+                        "'${readConfiguration.ssid}'",
+                )
+            }
+            validateApConfiguration(if (companion) null else readConfiguration)
+            null
+        } catch (failure: WirelessStartupException) {
+            failure
         }
         // The Android configuration describes the 2.4 GHz network, so its channel, band and
         // frequency say nothing about the companion; only its security carries over.
@@ -100,25 +109,21 @@ class ManualHotspotManager(
             cancelled = { closed || isCancelled() },
             pause = { millis -> synchronized(waitLock) { if (!closed && !isCancelled()) waitLock.wait(millis) } },
             log = {},
+            configuredInterface = preferredInterface,
         ).let { readiness ->
             try {
                 readiness.await(timeoutMillis)
             } catch (failure: WirelessStartupException) {
                 // carlito | Preserve the failure category while exposing factory state/path separately.
                 onDiagnostic("manual hotspot readiness failed ${interfaces.vendorDiagnosticSnapshot()}")
-                throw failure
+                throw configurationFailure ?: failure
             }
         }
         val factoryRoute = selected.factoryRoute
         // carlito | The separate factory AP must not inherit the other Android AP's SSID or
         // security. Use one saved credential pair; require validation for ordinary Android APs.
         val apConfiguration = if (factoryRoute || companion) null else readConfiguration
-        if (apConfiguration != null && apConfiguration.ssid != expectedSsid) {
-            throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
-                "Manual hotspot SSID does not match the active local AP configuration: " +
-                    "'${apConfiguration.ssid}'")
-        }
-        validateApConfiguration(apConfiguration)
+        if (!factoryRoute && configurationFailure != null) throw configurationFailure
         confirmed = selected
         onDiagnostic("hotspot interface confirmed iface=${selected.name} index=${selected.index} atNs=${System.nanoTime()}")
         val network = NetworkInterface.getByName(selected.name)
@@ -214,7 +219,7 @@ class ManualHotspotManager(
         if (expectedChannel > 0 && configuration.channel > 0 &&
             configuration.channel != expectedChannel
         ) {
-            throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
+            throw detailsDiffer(
                 "Manual hotspot channel ${configuration.channel} does not match configured " +
                 "channel $expectedChannel",
             )
@@ -227,7 +232,7 @@ class ManualHotspotManager(
         if (actualBand != null && expectedBand != ManualHotspotBand.AUTO &&
             actualBand != expectedBand
         ) {
-            throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
+            throw detailsDiffer(
                 "Manual hotspot band ${wifiBandLabel(configuration.band)} does not match " +
                     "configured band ${wifiBandLabel(if (expectedBand == ManualHotspotBand.GHZ_2_4) 1 else 2)}",
             )
@@ -235,7 +240,7 @@ class ManualHotspotManager(
         // WPA2 vs WPA3 variants are fine: the live security is what the iPhone is told (see start()).
         // Only an open/secured mismatch means the saved password cannot be right.
         if ((configuration.security == Iap2WirelessSecurity.NONE) != (expectedSecurity == Iap2WirelessSecurity.NONE)) {
-            throw WirelessStartupException(WirelessStartupFailure.HOTSPOT_CONFIGURATION,
+            throw detailsDiffer(
                 "Manual hotspot security ${configuration.security} does not match configured " +
                     "security $expectedSecurity",
             )
@@ -419,6 +424,10 @@ class ManualHotspotManager(
             apSsid.isNotEmpty() && FIVE_GHZ_SUFFIXES.any { expectedSsid.equals(apSsid + it, ignoreCase = true) }
     }
 }
+
+private fun detailsDiffer(message: String) = WirelessStartupException(
+    WirelessStartupFailure.HOTSPOT_CONFIGURATION, message, ConnectionFailureCause.CAR_HOTSPOT_DETAILS_DIFFER,
+)
 
 private fun ManualHotspotSecurity.toIap2Security(): Iap2WirelessSecurity = when (this) {
     ManualHotspotSecurity.OPEN -> Iap2WirelessSecurity.NONE
