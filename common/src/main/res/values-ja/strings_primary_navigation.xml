@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">HUD とメーターの内容を調整</string>
   <string name="vehicle_hub_keys_hint">ボタンの識別・割り当て・テスト</string>
   <string name="home_shortcuts">よく使う機能</string>
+  <string name="ui_vehicle_tools">車両連携</string>
+  <string name="ui_app_support">アプリとサポート</string>
 </resources>

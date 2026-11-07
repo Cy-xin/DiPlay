@@ -29,7 +29,7 @@ import org.robolectric.util.ReflectionHelpers
 class GlassUiScreenshotsTest {
     @Test fun capturesHomeSettingsAndSetupInBothAppearances() {
         for (night in listOf(false, true)) {
-            for (page in listOf("home", "vehicle", "settings", "connection", "quick-settings", "backup")) {
+            for (page in listOf("home", "settings", "settings-display", "connection", "quick-settings", "backup")) {
                 capture(page, night, 1280, 800, 1.3f, "zh", "${if (night) "dark" else "light"}-$page")
             }
         }
@@ -100,7 +100,8 @@ class GlassUiScreenshotsTest {
             setLocale(locale); setLayoutDirection(locale)
         }, activity.resources.displayMetrics)
         try {
-            ReflectionHelpers.setField(activity, "page", page)
+            ReflectionHelpers.setField(activity, "page", if (page == "settings-display") "settings" else page)
+            if (page == "settings-display") ReflectionHelpers.setField(activity, "settingsCategory", SettingsCategory.DISPLAY)
             ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
             val content = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
             val w = (width * activity.resources.displayMetrics.density).toInt()

@@ -14,52 +14,51 @@ import org.robolectric.util.ReflectionHelpers
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [29], qualifiers = "zh-w1280dp-h800dp")
 class PrimaryNavigationTest {
-    @Test fun primaryTabsPreserveTheVehicleDetailReturnPath() {
+    @Test fun twoTabsKeepVehicleToolsInsideSettings() {
         val activity = Robolectric.buildActivity(DiPlayActivity::class.java).get()
         activity.setTheme(android.R.style.Theme_Material_NoActionBar)
         ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
-        fun page() = ReflectionHelpers.getField<String>(activity, "page")
         fun tab(destination: String) = activity.window.decorView.findViewWithTag<View>("primary-navigation:$destination")
         try {
-            tab("vehicle").performClick()
-            assertEquals("vehicle", page())
-            assertTrue(tab("vehicle").isSelected)
-            descendants(activity.window.decorView).single {
-                it.contentDescription == activity.getString(R.string.projection_editor)
-            }.performClick()
-            assertEquals("vehicle-hud", page())
-            assertTrue(tab("vehicle").isSelected)
-            ReflectionHelpers.callInstanceMethod<Unit>(activity, "navigateBack")
-            assertEquals("vehicle", page())
+            assertNull(tab("vehicle"))
             tab("settings").performClick()
-            assertEquals("settings", page())
+            assertEquals("settings", ReflectionHelpers.getField<String>(activity, "page"))
             assertTrue(tab("settings").isSelected)
+            assertEquals(2, descendants(activity.window.decorView).count { it.tag?.toString()?.startsWith("primary-navigation:") == true })
+            val expected = listOf(
+                R.string.vehicle_map_title to VehicleMapProjectionActivity::class.java,
+                R.string.projection_editor to GeelyProjectionEditorActivity::class.java,
+                R.string.steering_identification to SteeringControlsActivity::class.java,
+            )
+            for ((title, type) in expected) {
+                descendants(activity.window.decorView).single {
+                    it.contentDescription == activity.getString(title)
+                }.performClick()
+                assertEquals(type.name, org.robolectric.Shadows.shadowOf(activity).nextStartedActivity.component!!.className)
+            }
             tab("home").performClick()
-            assertEquals("home", page())
-            assertTrue(tab("home").isSelected)
+            assertEquals("home", ReflectionHelpers.getField<String>(activity, "page"))
         } finally { activity.finish() }
     }
 
-    @Test fun commonShortcutsReturnToTheirOriginatingTab() {
+    @Test fun homeShortcutsKeepTheirReturnPath() {
         val activity = Robolectric.buildActivity(DiPlayActivity::class.java).get()
         activity.setTheme(android.R.style.Theme_Material_NoActionBar)
         try {
-            for (origin in listOf("home", "vehicle")) {
-                for ((title, destination) in listOf(R.string.connection to "connection", R.string.settings_quick_settings to "quick-settings")) {
-                    ReflectionHelpers.setField(activity, "page", origin)
-                    ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
-                    descendants(activity.window.decorView).single {
-                        it.contentDescription == activity.getString(title)
-                    }.performClick()
-                    assertEquals(destination, ReflectionHelpers.getField<String>(activity, "page"))
-                    assertTrue(activity.window.decorView.findViewWithTag<View>("primary-navigation:$origin").isSelected)
-                    ReflectionHelpers.callInstanceMethod<Unit>(activity, "navigateBack")
-                    assertEquals(origin, ReflectionHelpers.getField<String>(activity, "page"))
-                }
-                assertEquals(1, descendants(activity.window.decorView).count {
-                    it.contentDescription == activity.getString(R.string.open_car_hotspot_settings)
-                })
+            for ((title, destination) in listOf(R.string.connection to "connection", R.string.settings_quick_settings to "quick-settings")) {
+                ReflectionHelpers.setField(activity, "page", "home")
+                ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
+                descendants(activity.window.decorView).single {
+                    it.contentDescription == activity.getString(title)
+                }.performClick()
+                assertEquals(destination, ReflectionHelpers.getField<String>(activity, "page"))
+                assertTrue(activity.window.decorView.findViewWithTag<View>("primary-navigation:home").isSelected)
+                ReflectionHelpers.callInstanceMethod<Unit>(activity, "navigateBack")
+                assertEquals("home", ReflectionHelpers.getField<String>(activity, "page"))
             }
+            assertEquals(1, descendants(activity.window.decorView).count {
+                it.contentDescription == activity.getString(R.string.open_car_hotspot_settings)
+            })
         } finally { activity.finish() }
     }
 

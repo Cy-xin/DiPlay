@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">調整 HUD 與儀表內容</string>
   <string name="vehicle_hub_keys_hint">辨識、分配與測試按鍵</string>
   <string name="home_shortcuts">常用功能</string>
+  <string name="ui_vehicle_tools">車機適配</string>
+  <string name="ui_app_support">應用與支援</string>
 </resources>

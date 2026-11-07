@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">Налаштуйте вміст HUD і панелі.</string>
   <string name="vehicle_hub_keys_hint">Визначення, призначення та перевірка кнопок.</string>
   <string name="home_shortcuts">Швидкий доступ</string>
+  <string name="ui_vehicle_tools">Інтеграція з авто</string>
+  <string name="ui_app_support">Застосунок і підтримка</string>
 </resources>

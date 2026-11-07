@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">HUD 및 계기판 콘텐츠 조정</string>
   <string name="vehicle_hub_keys_hint">버튼 식별, 지정 및 테스트</string>
   <string name="home_shortcuts">빠른 실행</string>
+  <string name="ui_vehicle_tools">차량 연동</string>
+  <string name="ui_app_support">앱 및 지원</string>
 </resources>

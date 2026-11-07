@@ -440,7 +440,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             ?.let { runCatching { SettingsCategory.valueOf(it) }.getOrNull() }
         setupStep = savedInstanceState?.getInt("setup_step") ?: SetupGuide.STEP_CAR
         setupFromSettings = savedInstanceState?.getBoolean("setup_from_settings") ?: false
-        shortcutReturnPage = savedInstanceState?.getString("shortcut_return_page")?.takeIf { it == "home" || it == "vehicle" }
+        shortcutReturnPage = savedInstanceState?.getString("shortcut_return_page")?.takeIf { it == "home" || it == "settings" }
         page = savedInstanceState?.getString("page") ?: requestedPage(intent)
             ?: if (setupError == null && SetupGuide.shouldOpenOnLaunch(SetupGuide.seen(this),
                     DiPlayPreferences.phoneAddress(this) != null)) "setup" else "home"
@@ -760,7 +760,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         val content = column()
         scroll.addView(content)
         val header = if (page == "settings") settingsHeader(compact) else standardHeader(compact)
-        val pageRoot: View = if (page == "settings" && isExpandedSettingsLayout) {
+        val pageRoot: View = if (page == "settings" && isExpandedSettingsLayout && settingsCategory != SettingsCategory.OVERVIEW) {
             scroll.background = null
             content.setPadding(0, 0, 0, dp(32))
             settingsCategoryContent(content)
@@ -787,7 +787,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                     content.addView(space(GlassDesign.SECTION_GAP_DP))
                     content.addView(quickSettingsCard())
                 }
-                "vehicle" -> vehicleHub(content)
+                "vehicle" -> vehicleSettings(content)
                 "vehicle-hud" -> renderSections(content, setOf(SettingsSection.GEELY_NAVIGATION))
                 "vehicle-keys" -> renderSections(content, setOf(SettingsSection.GEELY_STEERING))
                 else -> home(content)
@@ -801,7 +801,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             background = GlassDesign.backdrop(palette)
             addView(pageRoot, FrameLayout.LayoutParams(-1, -1))
             val navigation = primaryNavigation()
-            val widthDp = minOf(GlassDesign.NAV_ITEM_WIDTH_DP * 3 + GlassDesign.NAV_INSET_DP * 2,
+            val widthDp = minOf(GlassDesign.NAV_ITEM_WIDTH_DP * 2 + GlassDesign.NAV_INSET_DP * 2,
                 resources.configuration.screenWidthDp - GlassDesign.NAV_MARGIN_DP * 2).coerceAtLeast(1)
             addView(navigation, FrameLayout.LayoutParams(dp(widthDp), dp(GlassDesign.NAV_HEIGHT_DP)).apply {
                 gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
@@ -905,8 +905,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 shortcutReturnPage = null
                 connectionSettingsReturnCategory = null
             }
-            page == "vehicle-hud" || page == "vehicle-keys" -> page = "vehicle"
-            page == "vehicle" -> page = "home"
+            page.startsWith("vehicle") -> {
+                page = "settings"
+                settingsCategory = SettingsCategory.VEHICLE
+            }
             page == "backup" -> {
                 stopBackupServer()
                 page = "settings"
@@ -922,7 +924,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 settingsCategory = returnCategory
                 connectionSettingsReturnCategory = null
             }
-            page == "settings" && !isExpandedSettingsLayout && settingsCategory != SettingsCategory.OVERVIEW -> {
+            page == "settings" && settingsCategory != SettingsCategory.OVERVIEW -> {
                 settingsCategory = SettingsCategory.OVERVIEW
             }
             else -> {
@@ -1019,37 +1021,37 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             dp(GlassDesign.NAV_INSET_DP), dp(GlassDesign.NAV_INSET_DP))
         val active = when {
             page in setOf("connection", "quick-settings") && shortcutReturnPage != null -> shortcutReturnPage!!
-            page.startsWith("vehicle") -> "vehicle"
+            page.startsWith("vehicle") -> "settings"
             page in setOf("settings", "backup", "connection", "setup") -> "settings"
             else -> "home"
         }
         for ((destination, titleId, iconId) in listOf(
-            Triple("home", R.string.primary_nav_carplay, R.drawable.ic_dp_overview),
-            Triple("vehicle", R.string.primary_nav_vehicle, R.drawable.ic_dp_car),
+            Triple("home", R.string.primary_nav_carplay, R.drawable.ic_dp_display),
             Triple("settings", R.string.primary_nav_settings, R.drawable.ic_dp_advanced),
         )) {
             val selected = active == destination
             val title = getString(titleId)
-            addView(column().apply {
+            addView(row().apply {
                 tag = "primary-navigation:$destination"
                 gravity = Gravity.CENTER
                 isClickable = true; isFocusable = true; isSelected = selected
                 contentDescription = title
                 background = RippleDrawable(ColorStateList.valueOf(RIPPLE),
-                    GlassDesign.surface(this@DiPlayActivity, if (selected) RAIL_SELECTED else Color.TRANSPARENT,
+                    GlassDesign.surface(this@DiPlayActivity, if (selected) ACCENT else Color.TRANSPARENT,
                         Color.TRANSPARENT, GlassDesign.CONTROL_RADIUS_DP), null)
                 foreground = buttonFocusRing()
                 addView(ImageView(this@DiPlayActivity).apply {
-                    setImageResource(iconId); imageTintList = ColorStateList.valueOf(TEXT)
+                    setImageResource(iconId); imageTintList = ColorStateList.valueOf(if (selected) palette.onAccent else MUTED)
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(dp(24), dp(24)))
-                addView(label(title, 13, if (selected) TEXT else MUTED, selected).apply {
+                }, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginEnd = dp(8) })
+                addView(label(title, 16, if (selected) palette.onAccent else MUTED, selected).apply {
                     gravity = Gravity.CENTER; maxLines = 1
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(-1, -2))
+                }, LinearLayout.LayoutParams(-2, -2))
                 setOnClickListener {
-                    if (page != destination) {
+                    if (page != destination || destination == "settings" && settingsCategory != SettingsCategory.OVERVIEW) {
+                        if (destination == "settings") settingsCategory = SettingsCategory.OVERVIEW
                         connectionSettingsReturnCategory = null
                         shortcutReturnPage = null
                         page = destination
@@ -1062,7 +1064,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     private fun shortcutLink(title: Int, icon: Int, action: () -> Unit): View = row().apply {
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(72)
+        minimumHeight = dp(64)
         isClickable = true; isFocusable = true; contentDescription = getString(title)
         background = RippleDrawable(ColorStateList.valueOf(RIPPLE), null, ColorDrawable(Color.WHITE))
         foreground = buttonFocusRing()
@@ -1082,7 +1084,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         showDividers = LinearLayout.SHOW_DIVIDER_MIDDLE
         dividerDrawable = GradientDrawable().apply { setColor(BORDER); setSize(1, dp(1)) }
         fun open(destination: String) {
-            shortcutReturnPage = page.takeIf { it == "home" || it == "vehicle" } ?: "home"
+            shortcutReturnPage = page.takeIf { it == "home" || it == "settings" } ?: "home"
             connectionSettingsReturnCategory = null
             page = destination
             render()
@@ -1092,38 +1094,18 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         addView(shortcutLink(R.string.settings_quick_settings, R.drawable.ic_dp_advanced) { open("quick-settings") })
     }
 
-    private fun vehicleHub(content: LinearLayout) {
-        settingsPageTitle(content, getString(R.string.primary_nav_vehicle), getString(R.string.vehicle_hub_subtitle))
-        content.addView(card().apply {
-            addView(label(getString(R.string.home_shortcuts), 22, TEXT, true))
-            addView(connectionShortcuts())
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(GlassDesign.SECTION_GAP_DP) })
-        fun entry(title: Int, hint: Int, icon: Int, action: () -> Unit): View = card().apply {
-            isClickable = true; isFocusable = true
-            contentDescription = getString(title)
-            foreground = buttonFocusRing()
-            addView(row().apply {
-                gravity = Gravity.CENTER_VERTICAL
-                addView(ImageView(this@DiPlayActivity).apply {
-                    setImageResource(icon); imageTintList = ColorStateList.valueOf(TEXT)
-                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-                }, LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(GlassDesign.SECTION_GAP_DP) })
-                addView(column().apply {
-                    addView(label(getString(title), 20, TEXT, true))
-                    addView(label(getString(hint), 14, MUTED))
-                }, LinearLayout.LayoutParams(0, -2, 1f))
-            })
-            setOnClickListener { action() }
-        }
-        content.addView(entry(R.string.vehicle_map_title, R.string.vehicle_hub_projection_hint, R.drawable.ic_dp_display) {
-            startActivity(Intent(this, VehicleMapProjectionActivity::class.java))
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(GlassDesign.SECTION_GAP_DP) })
-        content.addView(entry(R.string.projection_editor, R.string.vehicle_hub_layout_hint, R.drawable.ic_dp_navigation) {
-            page = "vehicle-hud"; render()
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(GlassDesign.SECTION_GAP_DP) })
-        content.addView(entry(R.string.steering_identification, R.string.vehicle_hub_keys_hint, R.drawable.ic_dp_car) {
-            page = "vehicle-keys"; render()
-        }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(GlassDesign.SECTION_GAP_DP) })
+    /** Launchers only: the underlying vehicle settings keep their existing categories and persistence. */
+    private fun vehicleToolLinks(): View = column().apply {
+        tag = "settings-vehicle-tools"
+        addView(shortcutLink(R.string.vehicle_map_title, R.drawable.ic_dp_display) {
+            startActivity(Intent(this@DiPlayActivity, VehicleMapProjectionActivity::class.java))
+        })
+        addView(shortcutLink(R.string.projection_editor, R.drawable.ic_dp_navigation) {
+            startActivity(Intent(this@DiPlayActivity, GeelyProjectionEditorActivity::class.java))
+        })
+        addView(shortcutLink(R.string.steering_identification, R.drawable.ic_dp_car) {
+            startActivity(Intent(this@DiPlayActivity, SteeringControlsActivity::class.java))
+        })
     }
 
     private fun home(content: LinearLayout) {
@@ -1131,11 +1113,19 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         fun homeButton(title: String, primary: Boolean, click: () -> Unit) = button(title, primary, click)
         val wide = resources.configuration.screenWidthDp >= 850
         val body = column()
-        val homeMuted = if (appNight) MUTED else Color.rgb(42, 80, 51)
+        val homeMuted = MUTED
         val card = card().apply { background = GlassDesign.connectionSurface(this@DiPlayActivity, palette) }
-        homeCardTitle = label(getString(R.string.wireless_carplay), 16, ACCENT, true)
-        card.addView(homeCardTitle)
-        status = label(getString(R.string.ready_when_you_are), if (compact) 24 else 32, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
+        homeCardTitle = label(getString(R.string.wireless_carplay), 16, MUTED, false)
+        card.addView(row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(homeCardTitle, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(ImageView(this@DiPlayActivity).apply {
+                setImageResource(R.drawable.ic_dp_connection)
+                imageTintList = ColorStateList.valueOf(MUTED)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(32), dp(32)))
+        })
+        status = label(getString(R.string.ready_when_you_are), if (compact) 24 else 36, TEXT, true).apply { setPadding(0, dp(10), 0, dp(16)) }
         card.addView(status)
         connectButton = homeButton(getString(R.string.connect_phone), true) {
             if (CarPlayBackgroundSession.hasSession()) openProjection()
@@ -1215,7 +1205,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         if (wide || compact && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             body.addView(row().apply {
                 gravity = Gravity.TOP
-                addView(card, LinearLayout.LayoutParams(0, -2, 1.6f))
+                addView(card, LinearLayout.LayoutParams(0, -2, 1.25f))
                 addView(space(GlassDesign.SECTION_GAP_DP), LinearLayout.LayoutParams(dp(GlassDesign.SECTION_GAP_DP), 1))
                 addView(right, LinearLayout.LayoutParams(0, -2, 1f))
             })
@@ -1345,7 +1335,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
     }
 
     private fun settingsOverview(content: LinearLayout) {
-        settingsPageTitle(content, getString(R.string.settings_overview), getString(R.string.settings_overview_subtitle))
+        content.addView(label(getString(R.string.settings_overview), 26, TEXT, true))
+        content.addView(space(SETTINGS_BLOCK_GAP_DP))
         val readiness = card().apply {
             setPadding(dp(20), dp(16), dp(20), dp(16))
         }
@@ -1353,51 +1344,53 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         renderedReadiness = null
         refreshReadiness()
         content.addView(readiness, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
-        content.addView(button(getString(R.string.setup_guide), false) { openSetupGuide(fromSettings = true) },
-            LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(6) })
-        content.addView(label(getString(R.string.setup_guide_description), 14, MUTED).apply {
-            setPadding(0, 0, 0, dp(20))
-        })
-
-        val destinations = listOf(
+        val everyday = listOf(
             SettingsCategory.CONNECTION to R.string.settings_connection_summary,
             SettingsCategory.DISPLAY to R.string.settings_display_summary,
             SettingsCategory.AUDIO to R.string.settings_audio_summary,
             SettingsCategory.NAVIGATION to R.string.settings_navigation_summary,
-            SettingsCategory.VEHICLE to R.string.settings_vehicle_summary,
+        )
+        val support = listOf(
             SettingsCategory.LANGUAGE to R.string.settings_language_summary,
             SettingsCategory.ABOUT to R.string.about_diplay,
             SettingsCategory.DIAGNOSTICS to R.string.settings_diagnostics_summary,
             SettingsCategory.ADVANCED to R.string.settings_advanced_subtitle,
         )
-        val categoryGap = dp(SETTINGS_BLOCK_GAP_DP)
-        val twoColumns = isExpandedSettingsLayout && resources.configuration.let {
-            SettingsLayoutPolicy.overviewHasTwoColumns(it.screenWidthDp, it.fontScale)
+        fun group(title: Int, entries: List<Pair<SettingsCategory, Int>>, tools: Boolean = false) = column().apply {
+            addView(settingsSectionHeading(title))
+            addView(card().apply {
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                entries.forEach { (category, summary) ->
+                    addView(settingsSummaryCard(category, getString(summary)))
+                }
+                if (tools) addView(vehicleToolLinks())
+            })
         }
-        if (twoColumns) {
-            val columns = row().apply { gravity = Gravity.TOP }
-            val setup = column()
-            setup.addView(settingsSectionHeading(R.string.settings_your_setup))
-            destinations.forEach { item ->
-                setup.addView(settingsSummaryCard(item.first, getString(item.second)),
-                    LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = categoryGap })
-            }
-            columns.addView(setup, LinearLayout.LayoutParams(0, -2, 1f))
-            columns.addView(space(14), LinearLayout.LayoutParams(dp(14), 1))
-            val quick = column()
-            quick.addView(settingsSectionHeading(R.string.settings_quick_settings))
-            quick.addView(quickSettingsCard())
-            columns.addView(quick, LinearLayout.LayoutParams(0, -2, 1f))
-            content.addView(columns, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
+        val groups = listOf(
+            group(R.string.settings_your_setup, everyday),
+            group(R.string.ui_vehicle_tools, listOf(SettingsCategory.VEHICLE to R.string.settings_vehicle_summary), tools = true),
+            group(R.string.ui_app_support, support),
+        )
+        val wideIndex = resources.configuration.let { it.screenWidthDp >= 1100 && it.fontScale <= 1.4f }
+        if (wideIndex) {
+            content.addView(row().apply {
+                gravity = Gravity.TOP
+                groups.forEachIndexed { index, group ->
+                    addView(group, LinearLayout.LayoutParams(0, -2, 1f).apply {
+                        if (index > 0) marginStart = dp(SETTINGS_BLOCK_GAP_DP)
+                    })
+                }
+            }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
         } else {
-            content.addView(settingsSectionHeading(R.string.settings_your_setup))
-            destinations.forEach { item ->
-                content.addView(settingsSummaryCard(item.first, getString(item.second)),
-                    LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = categoryGap })
+            groups.forEach { group ->
+                content.addView(group, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
             }
-            content.addView(settingsSectionHeading(R.string.settings_quick_settings).apply { setPadding(0, dp(10), 0, dp(8)) })
-            content.addView(quickSettingsCard(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
         }
+        content.addView(settingsSectionHeading(R.string.settings_quick_settings))
+        content.addView(quickSettingsCard(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
+        content.addView(button(getString(R.string.setup_guide), false) { openSetupGuide(fromSettings = true) },
+            LinearLayout.LayoutParams(-1, dp(56)).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
+        content.addView(label(getString(R.string.setup_guide_description), 14, MUTED))
 
         renderSections(content, SettingsInformationArchitecture.sectionsByCategory.getValue(SettingsCategory.OVERVIEW))
     }
@@ -1439,16 +1432,25 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             state == SettingsReadiness.CONNECTED -> READY
             else -> TEXT
         }
-        card.addView(label(title, 22, tint, true))
-        card.addView(label(detail, 15, MUTED).apply { setPadding(0, dp(6), 0, 0) })
-        when (state) {
-            SettingsReadiness.CHOOSE_IPHONE -> card.addView(button(getString(R.string.settings_choose_iphone_action), true) {
-                choosePhone()
-            }, matchButton(12, 56))
-            SettingsReadiness.SETUP_ERROR, SettingsReadiness.HOTSPOT_SETUP -> card.addView(button(getString(R.string.open_connection_setup), true) {
+        val copy = column().apply {
+            addView(label(title, 20, tint, true))
+            addView(label(detail, 15, MUTED).apply { setPadding(0, dp(6), 0, 0) })
+        }
+        val action = when (state) {
+            SettingsReadiness.CHOOSE_IPHONE -> button(getString(R.string.settings_choose_iphone_action), true) { choosePhone() }
+            SettingsReadiness.SETUP_ERROR, SettingsReadiness.HOTSPOT_SETUP -> button(getString(R.string.open_connection_setup), true) {
                 openConnectionSetupFromSettings()
-            }, matchButton(12, 56))
-            else -> Unit
+            }
+            else -> null
+        }
+        val horizontal = resources.configuration.let { it.screenWidthDp >= 850 && it.fontScale <= 1.4f }
+        if (horizontal) card.addView(row().apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(copy, LinearLayout.LayoutParams(0, -2, 1f))
+            action?.let { addView(it, LinearLayout.LayoutParams(dp(240), dp(56)).apply { marginStart = dp(SETTINGS_BLOCK_GAP_DP) }) }
+        }) else {
+            card.addView(copy)
+            action?.let { card.addView(it, matchButton(SETTINGS_BLOCK_GAP_DP, 56)) }
         }
     }
 
@@ -1482,9 +1484,10 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         setPadding(0, 0, 0, dp(10))
     }
 
-    private fun settingsSummaryCard(category: SettingsCategory, summary: String): LinearLayout = card().apply {
+    private fun settingsSummaryCard(category: SettingsCategory, summary: String): LinearLayout = column().apply {
+        minimumHeight = dp(80)
         val warning = category == SettingsCategory.ADVANCED
-        setPadding(dp(24), dp(10), dp(24), dp(10))
+        setPadding(dp(16), dp(12), dp(16), dp(12))
         isClickable = true
         isFocusable = true
         foreground = android.graphics.drawable.LayerDrawable(arrayOf(
@@ -1502,6 +1505,11 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
                 addView(label(settingsCategoryTitle(category), 17, if (warning) WARNING else TEXT, true))
                 addView(label(summary, 13, MUTED).apply { setPadding(0, dp(3), 0, 0) })
             }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(ImageView(this@DiPlayActivity).apply {
+                setImageResource(R.drawable.ic_dp_chevron)
+                imageTintList = ColorStateList.valueOf(MUTED)
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { marginStart = dp(8) })
         })
         setOnClickListener { openSettingsCategory(category) }
     }
@@ -1557,6 +1565,8 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
 
     private fun vehicleSettings(content: LinearLayout) {
         settingsPageTitle(content, getString(R.string.settings_vehicle), getString(R.string.settings_vehicle_summary))
+        content.addView(card().apply { addView(vehicleToolLinks()) },
+            LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(SETTINGS_BLOCK_GAP_DP) })
         renderSections(content, SettingsInformationArchitecture.sectionsByCategory.getValue(SettingsCategory.VEHICLE))
         section(content, getString(R.string.settings_advanced), R.drawable.ic_dp_advanced) { card ->
             card.addView(label(getString(R.string.settings_vehicle_description), 16, MUTED))
@@ -7008,7 +7018,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
         }
         parent.addView(button, matchButton(0, 60)); parent.addView(space(12))
     }
-    private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP)); elevation = dp(2).toFloat() }
+    private fun card() = column().apply { background = rounded(SURFACE, BORDER); setPadding(dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP), dp(GlassDesign.PANEL_INSET_DP)); elevation = 0f }
     private fun column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private fun row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; layoutParams = LinearLayout.LayoutParams(-1, -2) }
     private class SettingsSearchEditText(context: android.content.Context) : EditText(context) {

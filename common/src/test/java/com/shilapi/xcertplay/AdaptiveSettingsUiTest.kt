@@ -1079,6 +1079,7 @@ class AdaptiveSettingsUiTest {
     @Config(sdk = [29], qualifiers = "en-w1000dp-h700dp")
     fun expandedRailStaysOutsideTheScrollingCategory() {
         val screen = openSettings()
+        openCategory(screen, SettingsCategory.DISPLAY)
         val categoryScroll = ReflectionHelpers.getField<ScrollView>(screen, "rootScroll")
         val railDestination = descendants(screen.window.decorView).first {
             it.contentDescription == screen.getString(R.string.settings_open_category,
@@ -1086,7 +1087,7 @@ class AdaptiveSettingsUiTest {
                 descendants(it).filterIsInstance<ImageView>().count() == 1
         }
 
-        assertTrue(texts(screen).any { it.text == screen.getString(R.string.settings_quick_settings) && isInside(it, categoryScroll) })
+        assertTrue(texts(screen).any { it.text == screen.getString(R.string.settings_display) && isInside(it, categoryScroll) })
         assertFalse(isInside(railDestination, categoryScroll))
     }
 
@@ -1094,6 +1095,7 @@ class AdaptiveSettingsUiTest {
     @Config(sdk = [29], qualifiers = "en-w1000dp-h700dp")
     fun expandedRailUsesAnIconForEveryDestination() {
         val screen = openSettings()
+        openCategory(screen, SettingsCategory.DISPLAY)
         val rail = ReflectionHelpers.getField<ScrollView>(screen, "settingsRailScroll")
         val destinations = descendants(rail).filter { destination ->
             destination.contentDescription?.startsWith("Open ") == true &&
@@ -1115,7 +1117,7 @@ class AdaptiveSettingsUiTest {
             val destination = descendants(screen.window.decorView).single {
                 it.contentDescription == screen.getString(R.string.settings_open_category, title)
             }
-            assertEquals(1, descendants(destination).filterIsInstance<ImageView>().count())
+            assertEquals(2, descendants(destination).filterIsInstance<ImageView>().count())
         }
     }
 
@@ -1170,7 +1172,7 @@ class AdaptiveSettingsUiTest {
             val vehicle = screen.getString(R.string.settings_open_category, screen.getString(R.string.settings_vehicle))
             val language = screen.getString(R.string.settings_open_category, screen.getString(R.string.language_section_title))
             val about = screen.getString(R.string.settings_open_category, screen.getString(R.string.about))
-            assertEquals(titles.indexOf(vehicle) + 1, titles.indexOf(language))
+            assertTrue(titles.indexOf(language) > titles.indexOf(vehicle))
             assertEquals(titles.indexOf(language) + 1, titles.indexOf(about))
         }
         fun open(title: Int) {
@@ -1189,18 +1191,15 @@ class AdaptiveSettingsUiTest {
         assertEquals(SettingsCategory.ABOUT, ReflectionHelpers.getField<SettingsCategory>(screen, "settingsCategory"))
         assertTrue(texts(screen).any { it.text == screen.getString(R.string.carplay_at_home_in_your_car) })
         screen.onBackPressedDispatcher.onBackPressed()
-        if (expanded) {
-            assertEquals("home", ReflectionHelpers.getField<String>(screen, "page"))
-        } else {
-            assertEquals("settings", ReflectionHelpers.getField<String>(screen, "page"))
-            assertEquals(SettingsCategory.OVERVIEW, ReflectionHelpers.getField<SettingsCategory>(screen, "settingsCategory"))
-        }
+        assertEquals("settings", ReflectionHelpers.getField<String>(screen, "page"))
+        assertEquals(SettingsCategory.OVERVIEW, ReflectionHelpers.getField<SettingsCategory>(screen, "settingsCategory"))
     }
 
     @Test
     @Config(sdk = [29], qualifiers = "en-w1000dp-h400dp")
     fun selectingTheBottomRailDestinationKeepsItVisibleAndFocusedOnAShortScreen() {
         val screen = openSettings()
+        openCategory(screen, SettingsCategory.DISPLAY)
         val density = screen.resources.displayMetrics.density
         fun layout() {
             val root = screen.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
@@ -1264,10 +1263,14 @@ class AdaptiveSettingsUiTest {
         val categories = about.parent as LinearLayout
         assertEquals(categories.indexOfChild(about) + 1, categories.indexOfChild(diagnostics))
         assertEquals(categories.indexOfChild(diagnostics) + 1, categories.indexOfChild(advanced))
-        val gap = Math.round(GlassDesign.SECTION_GAP_DP * screen.resources.displayMetrics.density)
-        assertEquals(gap, (diagnostics.layoutParams as LinearLayout.LayoutParams).bottomMargin)
-        assertEquals(gap, (advanced.layoutParams as LinearLayout.LayoutParams).bottomMargin)
+        assertEquals(0, (diagnostics.layoutParams as LinearLayout.LayoutParams).bottomMargin)
+        assertEquals(0, (advanced.layoutParams as LinearLayout.LayoutParams).bottomMargin)
     }
+    private fun openCategory(screen: DiPlayActivity, category: SettingsCategory) {
+        ReflectionHelpers.callInstanceMethod<Unit>(screen, "openSettingsCategory",
+            ReflectionHelpers.ClassParameter(SettingsCategory::class.java, category))
+    }
+
     private fun installBydSettingsPackage() {
         shadowOf(context.packageManager).installPackage(PackageInfo().apply {
             packageName = "com.byd.carsettings"

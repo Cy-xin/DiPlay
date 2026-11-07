@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">HUD ve gösterge içeriğini ayarlayın.</string>
   <string name="vehicle_hub_keys_hint">Düğmeleri tanımlayın, atayın ve test edin.</string>
   <string name="home_shortcuts">Hızlı erişim</string>
+  <string name="ui_vehicle_tools">Araç entegrasyonu</string>
+  <string name="ui_app_support">Uygulama ve destek</string>
 </resources>

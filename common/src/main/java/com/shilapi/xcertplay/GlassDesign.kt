@@ -4,17 +4,13 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Outline
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.RadialGradient
 import android.graphics.Rect
-import android.graphics.Shader
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.widget.Button
-import androidx.core.graphics.ColorUtils
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -22,35 +18,19 @@ import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sin
 
-/** Static glass materials: no screen capture, live blur or per-frame allocations on the head unit. */
+/** Quiet, opaque surfaces with continuous corners; no live blur or per-frame effects. */
 internal object GlassDesign {
-    const val PANEL_RADIUS_DP = 28
-    const val CONTROL_RADIUS_DP = 20
+    const val PANEL_RADIUS_DP = 24
+    const val CONTROL_RADIUS_DP = 28
     const val PANEL_INSET_DP = 24
-    const val SECTION_GAP_DP = 20
-    const val NAV_HEIGHT_DP = 76
-    const val NAV_ITEM_WIDTH_DP = 104
+    const val SECTION_GAP_DP = 16
+    const val NAV_HEIGHT_DP = 64
+    const val NAV_ITEM_WIDTH_DP = 152
     const val NAV_MARGIN_DP = 16
     const val NAV_INSET_DP = 8
-    const val NAV_ELEVATION_DP = 6
+    const val NAV_ELEVATION_DP = 3
 
-    fun backdrop(palette: DiPlayPalette) = object : GradientDrawable() {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private var glow: Shader? = null
-        init { setColor(palette.background) }
-        override fun onBoundsChange(bounds: Rect) {
-            super.onBoundsChange(bounds)
-            if (bounds.isEmpty) return
-            glow = RadialGradient(bounds.width() * .12f, bounds.height() * .05f,
-                maxOf(bounds.width(), bounds.height()) * .85f,
-                ColorUtils.setAlphaComponent(palette.accent, if (palette.systemBarIconsAreDark) 0 else 10), Color.TRANSPARENT, Shader.TileMode.CLAMP)
-        }
-        override fun draw(canvas: Canvas) {
-            super.draw(canvas)
-            paint.shader = glow
-            canvas.drawRect(bounds, paint)
-        }
-    }
+    fun backdrop(palette: DiPlayPalette) = GradientDrawable().apply { setColor(palette.background) }
 
     fun surface(context: Context, color: Int, border: Int, radiusDp: Int = PANEL_RADIUS_DP) =
         ContinuousGlassDrawable(color, border, context.resources.displayMetrics.density).apply {
@@ -58,7 +38,7 @@ internal object GlassDesign {
         }
 
     fun connectionSurface(context: Context, palette: DiPlayPalette) = surface(context,
-        if (palette.systemBarIconsAreDark) Color.rgb(140, 235, 161) else Color.rgb(35, 77, 51),
+        palette.surface,
         Color.TRANSPARENT)
 
     fun styleButton(button: Button, palette: DiPlayPalette, primary: Boolean = false) = button.apply {
@@ -82,7 +62,7 @@ internal class ContinuousGlassDrawable(
 ) : GradientDrawable() {
     private val outlinePath = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var gradient: Shader? = null
+
     private var lastRadius = -1f
     init { setColor(fill) }
 
@@ -115,19 +95,17 @@ internal class ContinuousGlassDrawable(
             corner(l + radius, t + radius, PI)
             outlinePath.close()
         }
-        val isDark = ColorUtils.calculateLuminance(fill) < .25
-        val top = ColorUtils.blendARGB(fill, Color.WHITE, if (isDark) .025f else .04f)
-        gradient = LinearGradient(0f, t, 0f, b, top, fill, Shader.TileMode.CLAMP)
+
     }
 
     override fun draw(canvas: Canvas) {
         if (lastRadius != cornerRadius) rebuild()
         if (Color.alpha(fill) == 0 && Color.alpha(border) == 0) return
-        paint.style = Paint.Style.FILL; paint.shader = gradient; paint.alpha = (alpha * .96f).toInt()
+        paint.style = Paint.Style.FILL; paint.shader = null; paint.color = fill; paint.alpha = Color.alpha(fill) * alpha / 255
         canvas.drawPath(outlinePath, paint)
         paint.shader = null; paint.style = Paint.Style.STROKE; paint.strokeWidth = density
-        val edge = ColorUtils.blendARGB(border, Color.WHITE, .10f)
-        paint.color = edge; paint.alpha = (Color.alpha(edge) * alpha / 255f * .28f).toInt()
+        val edge = border
+        paint.color = edge; paint.alpha = (Color.alpha(edge) * alpha / 255f * .32f).toInt()
         canvas.drawPath(outlinePath, paint)
     }
 

@@ -8,4 +8,6 @@
   <string name="vehicle_hub_layout_hint">Regola il contenuto di HUD e quadro strumenti.</string>
   <string name="vehicle_hub_keys_hint">Identifica, assegna e prova i pulsanti.</string>
   <string name="home_shortcuts">Accesso rapido</string>
+  <string name="ui_vehicle_tools">Integrazione veicolo</string>
+  <string name="ui_app_support">App e assistenza</string>
 </resources>
