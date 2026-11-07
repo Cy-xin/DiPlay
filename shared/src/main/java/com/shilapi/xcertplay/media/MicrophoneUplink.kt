@@ -63,6 +63,8 @@ internal class MicrophoneUplink(
     @Volatile private var echoCanceller: CallEchoCanceller? = null
     private var thread: Thread? = null
 
+    val isRunning: Boolean get() = running.get()
+
     fun start(): Boolean {
         if (!running.compareAndSet(false, true)) return true
 
@@ -321,7 +323,8 @@ internal class MicrophoneUplink(
     private fun capture(recorder: AudioRecord, socket: DatagramSocket) {
         runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO) }
         val frame = ByteArray(config.frameBytes)
-        val readBuffer = ByteArray(maxOf(frame.size, MIN_READ_BYTES))
+        // Read one negotiated frame: 2048 bytes delayed 16 kHz mono input by 64 ms.
+        val readBuffer = ByteArray(frame.size)
         val routeInfo = { routeType(recorder) }
         val ownSession = recorder.audioSessionId
         val silence = audioManager?.let { manager -> { silenceDetail(manager, ownSession) } }
@@ -487,10 +490,14 @@ internal class MicrophoneUplink(
      * Other apps' recordings carry no package name for a normal app, only their source.
      */
     private fun silenceDetail(manager: AudioManager, ownSession: Int): String {
-        val others = manager.activeRecordingConfigurations
+        val configurations = manager.activeRecordingConfigurations
+        val silenced = if (android.os.Build.VERSION.SDK_INT >= 29) {
+            configurations.firstOrNull { it.clientAudioSessionId == ownSession }?.isClientSilenced?.toString() ?: "unknown"
+        } else "unknown"
+        val others = configurations
             .filter { it.clientAudioSessionId != ownSession }
             .map { MicrophoneCaptureStats.sourceName(it.clientAudioSource) }
-        return "audioMode=${manager.mode} otherRecordings=" +
+        return "systemMuted=${manager.isMicrophoneMute} clientSilenced=$silenced audioMode=${manager.mode} otherRecordings=" +
             if (others.isEmpty()) "none" else others.take(MAX_LISTED_RECORDINGS).joinToString(",", "[", "]")
     }
 
@@ -572,7 +579,6 @@ internal class MicrophoneUplink(
 
     private companion object {
         const val TAG = "xcertplay-usb"
-        const val MIN_READ_BYTES = 2_048
         const val CLOSE_JOIN_MILLIS = 500L
         const val ECHO_TAIL_MILLIS = 250
         const val ECHO_REFERENCE_LEAD_NS = 30_000_000L

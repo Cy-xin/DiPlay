@@ -2289,6 +2289,16 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             getString(R.string.car_button_in_carplay), R.drawable.ic_dp_car) { card -> carButtonCard = card; carButtonControls(card) }
         filteredSection(content, SettingsSection.AUDIO_ROUTING,
             getString(R.string.audio_routing), R.drawable.ic_dp_audio) { card ->
+            val playbackGains = com.shilapi.xcertplay.media.PlaybackAudioGain.presets
+            val playbackGain = com.shilapi.xcertplay.media.PlaybackAudioGain.load(this)
+            choice(card, getString(R.string.settings_playback_gain),
+                playbackGains.map { getString(R.string.settings_navigation_attenuation_value, it) },
+                playbackGains.indexOf(playbackGain).coerceAtLeast(0), reconnects = false) { index ->
+                val db = playbackGains[index]
+                com.shilapi.xcertplay.media.PlaybackAudioGain.save(this, db)
+                CarPlayBackgroundSession.snapshot()?.sink?.setPlaybackGainDb(db)
+            }
+            card.addView(label(getString(R.string.settings_playback_gain_description), 14, MUTED))
             mediaChannelControl(card)
             navigationChannelControl(card)
             choice(card, getString(R.string.vehicle_audio_output_mode), listOf(
@@ -6994,6 +7004,7 @@ class DiPlayActivity : ComponentActivity(), AppAppearanceOwner {
             reconnects = sessionTransport) {
             AirPlayPersistence.saveMediaBufferMillis(this, wireless, presets[it])
         }
+        if (wireless) card.addView(label(getString(R.string.settings_wireless_short_buffer_hint), 14, MUTED))
     }
 
     // [announcesReconnect] labels a choice whose [save] reconnects by itself.

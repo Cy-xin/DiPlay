@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">Гучність CarPlay</string>
+    <string name="settings_playback_gain_description">Одразу змінює гучність звуку DiPlay. 0 dB зберігає початковий рівень. Підсилення може спричинити спотворення. Прямий Bluetooth регулюється в авто.</string>
+    <string name="settings_wireless_short_buffer_hint">Менший буфер зменшує очікування, але за нестабільного Wi-Fi можливі переривання. Типово 300 ms; доступні 150 і 200 ms. Може знадобитися повторне підключення.</string>
+</resources>

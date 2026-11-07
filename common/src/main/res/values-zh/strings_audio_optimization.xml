@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">CarPlay 播放音量</string>
+    <string name="settings_playback_gain_description">立即调整 DiPlay 输出的音量，0 dB 保持原音量。提高增益可能产生失真；蓝牙直连音频仍由车机调节。</string>
+    <string name="settings_wireless_short_buffer_hint">较小缓冲可减少等待，但 Wi-Fi 波动时更容易断续。默认仍为 300 ms，可选 150 或 200 ms。更改时可能需要重新连接。</string>
+</resources>

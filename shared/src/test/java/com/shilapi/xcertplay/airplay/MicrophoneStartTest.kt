@@ -15,7 +15,7 @@ class MicrophoneStartTest {
 
     @Test fun aVoiceMessageWithoutDownlinkAudioStartsTheMicrophoneOnce() {
         var started: Boolean? = null
-        gate.scheduleSilentStart(scheduler, 0) { startNow -> started = startNow() }
+        gate.scheduleSilentStart(scheduler, MicrophoneStart.SILENT_START_MILLIS) { startNow -> started = startNow() }
         drain()
 
         assertEquals(true, started)

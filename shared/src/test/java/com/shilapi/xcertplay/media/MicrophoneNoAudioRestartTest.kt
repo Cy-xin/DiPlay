@@ -63,6 +63,23 @@ class MicrophoneNoAudioRestartTest {
         assertTrue(diagnostics.joinToString("\n"), diagnostics.none { it.startsWith("Microphone: recording restarted") })
     }
 
+    @Test fun readsOneNegotiatedFrameInsteadOfWaitingFor2048Bytes() {
+        val first = java.util.concurrent.CountDownLatch(1)
+        val requested = AtomicInteger()
+        provide { size -> requested.compareAndSet(0, size); first.countDown(); Thread.sleep(5); size }
+        start()
+        assertTrue(first.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        assertEquals(config().frameBytes, requested.get())
+    }
+
+    @Test fun deadRecorderIsVisibleToTheRouteRecoveryWorker() {
+        provide { AudioRecord.ERROR_DEAD_OBJECT }
+        start()
+        val deadline = System.nanoTime() + 2_000_000_000L
+        while (uplink!!.isRunning && System.nanoTime() < deadline) Thread.sleep(5)
+        org.junit.Assert.assertFalse(uplink!!.isRunning)
+    }
+
     private fun provide(read: (Int) -> Int) {
         ShadowAudioRecord.setSourceProvider { record ->
             recorder.compareAndSet(null, record)

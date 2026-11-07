@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">CarPlay 재생 음량</string>
+    <string name="settings_playback_gain_description">DiPlay 출력에 즉시 적용됩니다. 0 dB는 원래 음량입니다. 증폭 시 왜곡될 수 있습니다. 직접 연결된 Bluetooth 오디오는 차량에서 조절합니다.</string>
+    <string name="settings_wireless_short_buffer_hint">버퍼가 작으면 대기 시간은 줄지만 Wi-Fi가 불안정할 때 끊길 수 있습니다. 기본값은 300 ms이며 150 또는 200 ms를 선택할 수 있습니다. 변경 시 재연결이 필요할 수 있습니다.</string>
+</resources>

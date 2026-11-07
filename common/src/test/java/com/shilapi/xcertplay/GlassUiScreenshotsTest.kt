@@ -29,12 +29,14 @@ import org.robolectric.util.ReflectionHelpers
 class GlassUiScreenshotsTest {
     @Test fun capturesHomeSettingsAndSetupInBothAppearances() {
         for (night in listOf(false, true)) {
-            for (page in listOf("home", "settings", "settings-display", "connection", "quick-settings", "backup")) {
+            for (page in listOf("home", "settings", "settings-display", "settings-audio", "connection", "quick-settings", "backup")) {
                 capture(page, night, 1280, 800, 1.3f, "zh", "${if (night) "dark" else "light"}-$page")
             }
         }
         capture("settings", false, 600, 960, 1.5f, "zh", "compact-settings-large-text")
         capture("settings", true, 600, 960, 1.5f, "ar", "compact-settings-rtl")
+        capture("settings-audio", false, 600, 960, 1.5f, "zh", "compact-audio-large-text")
+        capture("settings-audio", true, 600, 960, 1.5f, "ar", "compact-audio-rtl")
     }
 
     @Test fun capturesTheVehicleToolsAndGlassDialog() {
@@ -100,8 +102,9 @@ class GlassUiScreenshotsTest {
             setLocale(locale); setLayoutDirection(locale)
         }, activity.resources.displayMetrics)
         try {
-            ReflectionHelpers.setField(activity, "page", if (page == "settings-display") "settings" else page)
+            ReflectionHelpers.setField(activity, "page", if (page.startsWith("settings-")) "settings" else page)
             if (page == "settings-display") ReflectionHelpers.setField(activity, "settingsCategory", SettingsCategory.DISPLAY)
+            if (page == "settings-audio") ReflectionHelpers.setField(activity, "settingsCategory", SettingsCategory.AUDIO)
             ReflectionHelpers.callInstanceMethod<Unit>(activity, "render")
             val content = activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0)
             val w = (width * activity.resources.displayMetrics.density).toInt()

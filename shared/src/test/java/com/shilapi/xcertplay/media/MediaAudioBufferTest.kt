@@ -40,8 +40,10 @@ class MediaAudioBufferTest {
     }
 
     @Test
-    fun `wireless keeps the classic presets`() {
-        assertEquals(listOf(300, 500, 1000), MediaAudioBuffer.wirelessPresets)
+    fun `wireless offers shorter opt in buffers and keeps the stable defaults`() {
+        assertEquals(listOf(150, 200, 300, 500, 1000), MediaAudioBuffer.wirelessPresets)
+        assertEquals(150, MediaAudioBuffer.sanitizeWireless(150))
+        assertEquals(200, MediaAudioBuffer.sanitizeWireless(200))
         assertEquals(MediaAudioBuffer.DEFAULT_MILLIS, MediaAudioBuffer.sanitizeWireless(50))
         assertEquals(MediaAudioBuffer.DEFAULT_MILLIS, MediaAudioBuffer.sanitizeWireless(400))
         assertEquals(50, MediaAudioBuffer.sanitizeWired(50))

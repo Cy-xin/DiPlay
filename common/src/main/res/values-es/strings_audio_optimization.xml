@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">Volumen de CarPlay</string>
+    <string name="settings_playback_gain_description">Ajusta de inmediato el audio de DiPlay. 0 dB conserva el nivel original. Amplificar puede distorsionar el sonido. El Bluetooth directo se ajusta en el coche.</string>
+    <string name="settings_wireless_short_buffer_hint">Un búfer menor reduce la espera, pero puede causar cortes con Wi-Fi inestable. El valor predeterminado sigue en 300 ms; se puede elegir 150 o 200 ms. Puede requerir reconexión.</string>
+</resources>

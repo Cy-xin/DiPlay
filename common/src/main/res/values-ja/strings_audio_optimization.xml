@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">CarPlay 再生音量</string>
+    <string name="settings_playback_gain_description">DiPlay の出力音量にすぐ反映されます。0 dB は元の音量です。増幅すると音が歪む場合があります。直接の Bluetooth 音声は車側で調整してください。</string>
+    <string name="settings_wireless_short_buffer_hint">小さいバッファは待ち時間を減らしますが、Wi-Fi が不安定だと途切れやすくなります。既定は 300 ms、150 または 200 ms も選べます。変更時に再接続が必要な場合があります。</string>
+</resources>

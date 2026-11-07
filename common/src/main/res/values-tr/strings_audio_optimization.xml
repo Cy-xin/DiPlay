@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">CarPlay oynatma sesi</string>
+    <string name="settings_playback_gain_description">DiPlay sesine hemen uygulanır. 0 dB özgün düzeyi korur. Yükseltme bozulmaya neden olabilir. Doğrudan Bluetooth sesi araçtan ayarlanır.</string>
+    <string name="settings_wireless_short_buffer_hint">Küçük tampon beklemeyi azaltır ancak kararsız Wi-Fi ile kesinti yapabilir. Varsayılan 300 ms kalır; 150 veya 200 ms seçilebilir. Yeniden bağlantı gerekebilir.</string>
+</resources>

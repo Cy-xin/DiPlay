@@ -186,7 +186,7 @@ class TelephonyMicrophoneTest {
         manager.mode = AudioManager.MODE_IN_COMMUNICATION
         sink.onMicrophoneStopped(speechRecognition)
         val stats = diagnostics.last { it.startsWith("Microphone: stats") }
-        assertTrue(stats, stats.endsWith("peakDbfs=silent audioMode=3 otherRecordings=[VOICE_COMMUNICATION] ended=true"))
+        assertTrue(stats, stats.endsWith("peakDbfs=silent systemMuted=false clientSilenced=unknown audioMode=3 otherRecordings=[VOICE_COMMUNICATION] ended=true"))
     }
 
     @Test @Config(sdk = [28])
@@ -196,7 +196,7 @@ class TelephonyMicrophoneTest {
         awaitCapture()
         sink.onMicrophoneStopped(speechRecognition)
         val stats = diagnostics.last { it.startsWith("Microphone: stats") }
-        assertTrue(stats, stats.endsWith("peakDbfs=silent audioMode=0 otherRecordings=none ended=true"))
+        assertTrue(stats, stats.endsWith("peakDbfs=silent systemMuted=false clientSilenced=unknown audioMode=0 otherRecordings=none ended=true"))
     }
 
     @Test fun anUnverifiedPauseFlagDoesNotSwitchCallAudioRouting() {

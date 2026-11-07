@@ -664,6 +664,24 @@ class AdaptiveSettingsUiTest {
         assertEquals(0, detailScroll.scrollY)
     }
 
+    @Test fun playbackGainLivesInAudioAndAppliesWithoutReconnect() {
+        val screen = openSettings()
+        try {
+            openCategory(screen, SettingsCategory.AUDIO)
+            val title = screen.getString(R.string.settings_playback_gain)
+            descendants(screen.window.decorView).filterIsInstance<android.widget.Button>().single {
+                it.text.toString().startsWith(title)
+            }.performClick()
+            val dialog = ShadowAlertDialog.getLatestAlertDialog()
+            shadowOf(dialog).clickOnItem(com.shilapi.xcertplay.media.PlaybackAudioGain.presets.indexOf(-6))
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(-6, com.shilapi.xcertplay.media.PlaybackAudioGain.load(context))
+            assertEquals("settings", ReflectionHelpers.getField<String>(screen, "page"))
+            assertEquals(SettingsCategory.AUDIO, ReflectionHelpers.getField<SettingsCategory>(screen, "settingsCategory"))
+        } finally { com.shilapi.xcertplay.media.PlaybackAudioGain.save(context, 0) }
+    }
+
     @Test fun quickFullScreenChangesBothExistingPreferencesTogether() {
         AirPlayPersistence.saveHideTopBar(context, false)
         AirPlayPersistence.saveHideBottomBar(context, false)

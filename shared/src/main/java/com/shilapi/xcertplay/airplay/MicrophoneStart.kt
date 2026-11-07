@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Starts one stream's microphone at most once: at the first downlink packet, or [SILENT_START_MILLIS]
+ * Starts one stream's microphone at most once: at the first downlink packet, or asynchronously
  * after SETUP when the iPhone asks for input but plays nothing. An app voice message (Douyin, #566)
  * opens a speech-recognition stream without downlink audio, and capture waited for a packet that
  * never came. Calls still wait for their downlink: call capture uses the far-end audio as its echo
@@ -45,7 +45,8 @@ internal class MicrophoneStart(private val start: () -> Unit) {
     }
 
     companion object {
-        const val SILENT_START_MILLIS = 500L
+        // Input-only app voice sessions must not lose the first half-second of speech.
+        const val SILENT_START_MILLIS = 0L
 
         fun startsWithoutDownlink(audioType: String): Boolean = audioType != "telephony"
     }

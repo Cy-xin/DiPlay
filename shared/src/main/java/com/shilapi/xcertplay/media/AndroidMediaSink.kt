@@ -169,7 +169,15 @@ class AndroidMediaSink(
     private val telephonyAudioTypes = mutableSetOf<AudioStreamId>()
     private val audioRenderers = ConcurrentHashMap<AudioStreamId, AudioRenderer>()
     // carlito | Capture restarts retain the same RTP counters until the negotiated stream ends.
-    private data class PendingMicrophone(val config: MicrophoneConfig, val counters: MicrophoneCounters = MicrophoneCounters(), var retryAt: Long = 0L)
+    private data class PendingMicrophone(val config: MicrophoneConfig, val counters: MicrophoneCounters = MicrophoneCounters(), var retryAt: Long = 0L) {
+        var failures = 0
+        fun failed(now: Long) {
+            failures = (failures + 1).coerceAtMost(5)
+            val delay = if (isPhoneAudio(config.audioType)) 5_000L else
+                longArrayOf(500L, 1_000L, 2_000L, 5_000L)[(failures - 1).coerceAtMost(3)]
+            retryAt = now + delay
+        }
+    }
     private data class ActiveMicrophone(val request: PendingMicrophone, val uplink: MicrophoneUplink)
     private val pendingMicrophones = ConcurrentHashMap<AudioStreamId, PendingMicrophone>()
     private val microphoneUplinks = ConcurrentHashMap<AudioStreamId, ActiveMicrophone>()
@@ -196,12 +204,17 @@ class AndroidMediaSink(
     private val captureLock = Any()
     private val closingCommunicationRenderers = mutableSetOf<AudioRenderer>()
     @Volatile private var closed = false
+    @Volatile private var playbackGainDb = context?.let(PlaybackAudioGain::load) ?: 0
     @Volatile private var navigationAttenuationDb = NavigationAudioGain.clamp(navigationAttenuationDb)
 
     /** Apply a saved Audio setting to existing navigation tracks without reconnecting CarPlay. */
     fun setNavigationAttenuationDb(db: Int) {
         navigationAttenuationDb = NavigationAudioGain.clamp(db)
         audioRenderers.values.forEach { it.setNavigationAttenuationDb(navigationAttenuationDb) }
+    }
+    fun setPlaybackGainDb(db: Int) {
+        playbackGainDb = PlaybackAudioGain.clamp(db)
+        audioRenderers.values.forEach { it.setPlaybackGainDb(playbackGainDb) }
     }
     private var callSpeaker: CallSpeaker? = null // guarded by audioModeLock
     private var earpieceFallbackTried = false // guarded by audioModeLock
@@ -616,7 +629,11 @@ class AndroidMediaSink(
             routeDiagnostic?.let { runCatching { onAudioDiagnostic(it) } }
         }
         microphoneUplinks.entries.toList().forEach { (id, active) ->
-            if (pendingMicrophones[id] !== active.request || !ready || phone && !isPhoneAudio(active.request.config.audioType)) {
+            if (pendingMicrophones[id] !== active.request || !ready || !active.uplink.isRunning || phone && !isPhoneAudio(active.request.config.audioType)) {
+                if (ready && !active.uplink.isRunning && pendingMicrophones[id] === active.request) {
+                    active.request.failed(android.os.SystemClock.elapsedRealtime())
+                    runCatching { onAudioDiagnostic("Microphone: capture ended; retry scheduled after failures=${active.request.failures}") }
+                }
                 if (microphoneUplinks.remove(id, active)) active.uplink.close()
             }
         }
@@ -636,10 +653,12 @@ class AndroidMediaSink(
                     factorySource = factoryAudio?.microphoneSource(config.audioType, config.sampleRate, wirelessAudio),
                     preferredInput = audioOutputRoutes.microphone(config.audioType),
                     audioManager = audioManager, counters = pending.counters)
-                if (uplink.start() && !closed && pendingMicrophones[id] === pending) microphoneUplinks[id] = ActiveMicrophone(pending, uplink)
-                else { uplink.close(); pending.retryAt = android.os.SystemClock.elapsedRealtime() + 5_000L }
+                if (uplink.start() && !closed && pendingMicrophones[id] === pending) {
+                    pending.retryAt = 0L
+                    microphoneUplinks[id] = ActiveMicrophone(pending, uplink)
+                } else { uplink.close(); pending.failed(android.os.SystemClock.elapsedRealtime()) }
             } catch (error: Exception) {
-                pending.retryAt = android.os.SystemClock.elapsedRealtime() + 5_000L
+                pending.failed(android.os.SystemClock.elapsedRealtime())
                 MicrophoneCaptureStats.reportStartFailure(pending.config, error, onAudioDiagnostic)
             }
         }
@@ -833,10 +852,12 @@ class AndroidMediaSink(
                 appContext != null && BydBluetoothSuspend.isSuspendedByUs(appContext),
         ).also {
             it.setNavigationAttenuationDb(navigationAttenuationDb)
+            it.setPlaybackGainDb(playbackGainDb)
             if (format.audioType == TELEPHONY_AUDIO_TYPE) it.onRoutedToEarpiece = { moveCallToLoudspeaker(id) }
             audioRenderers[id] = it
             // Cover a Settings change made while this renderer was being prepared.
             it.setNavigationAttenuationDb(navigationAttenuationDb)
+            it.setPlaybackGainDb(playbackGainDb)
         }
     }
 
@@ -1895,6 +1916,7 @@ private class AudioRenderer(
     private var codec: MediaCodec? = null
     private var softwareOpusDecoder: SoftwareOpusDecoder? = null
     private var track: AudioTrack? = null
+    @Volatile private var playbackGainDb = 0
     @Volatile private var navigationAttenuationDb = 0
     private var appliedNavigationAttenuationDb: Int? = null
     private var pcm = ByteArray(64 * 1024)
@@ -2248,6 +2270,8 @@ private class AudioRenderer(
         AudioChannel.NAVIGATION -> navigationChannel
         else -> 0
     }
+
+    fun setPlaybackGainDb(db: Int) { playbackGainDb = PlaybackAudioGain.clamp(db) }
 
     fun setNavigationAttenuationDb(db: Int) {
         // The Settings callback must never wait for release(), which may be blocked in
@@ -2603,6 +2627,7 @@ private class AudioRenderer(
         voiceFilter?.process(data, offset, length)
         applyNavigationAttenuation()
         attenuateNavigation(data, offset, length)
+        PlaybackAudioGain.scalePcm16(data, offset, length, playbackGainDb)
         if (!fadeApplied) {
             applyFadeIn(data, offset, length)
             fadeApplied = true

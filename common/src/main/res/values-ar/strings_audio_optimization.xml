@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">مستوى تشغيل CarPlay</string>
+    <string name="settings_playback_gain_description">يطبق فورا على صوت DiPlay. يحافظ 0 dB على المستوى الأصلي. قد يسبب التضخيم تشويها. صوت Bluetooth المباشر يبقى تحت تحكم السيارة.</string>
+    <string name="settings_wireless_short_buffer_hint">يقلل المخزن الصغير الانتظار لكنه قد يسبب تقطعا مع Wi-Fi غير المستقر. الافتراضي 300 ms ويمكن اختيار 150 أو 200 ms. قد يلزم إعادة الاتصال.</string>
+</resources>

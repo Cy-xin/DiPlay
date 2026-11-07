@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_gain">CarPlay playback volume</string>
+    <string name="settings_playback_gain_description">Adjusts audio played by DiPlay immediately. 0 dB keeps the original level. Boosting may distort loud audio. Native Bluetooth audio still uses car volume.</string>
+    <string name="settings_wireless_short_buffer_hint">Lower buffers reduce waiting but can stutter when Wi-Fi is unstable. 300 ms remains the default; 150 or 200 ms are optional. Changes may require reconnection.</string>
+</resources>
