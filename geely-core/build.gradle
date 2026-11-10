@@ -1,0 +1,15 @@
+plugins { id 'com.android.library' }
+android {
+    namespace = 'com.shilapi.xcertplay.shared'
+    compileSdk = 37
+    defaultConfig { minSdk = 30 }
+    sourceSets { main { res.srcDirs = ['../shared/src/main/res']; aidl.srcDirs = ['../shared/src/main/aidl'] } }
+    buildFeatures { aidl true }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_11; targetCompatibility = JavaVersion.VERSION_11 }
+}
+dependencies {
+    implementation libs.bouncycastle
+    implementation libs.jmdns
+}
+android { testOptions { unitTests.returnDefaultValues = true } }
+dependencies { testImplementation libs.junit }
