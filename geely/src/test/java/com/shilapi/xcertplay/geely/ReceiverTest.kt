@@ -91,4 +91,13 @@ class ReceiverTest {
         ReceiverSessionGate.release(second)
     }
 
+    @Test fun hiddenPhysicalBluetoothAddressStillAllowsWirelessIdentification() {
+        val identity=com.shilapi.xcertplay.airplay.AirPlayIdentity.generate()
+        val air=receiverAirPlayConfig(identity,1280,720)
+        // Real phones may return a placeholder address; the controller then uses this fallback.
+        val wireless=com.shilapi.xcertplay.transport.Iap2WirelessIdentification(air.btMac,"TestNetwork")
+        assertEquals(ReceiverStore.deviceId(identity),wireless.bluetoothMac)
+        assertEquals(air.btMac,receiverAirPlayConfig(identity,1280,720).btMac)
+    }
+
 }

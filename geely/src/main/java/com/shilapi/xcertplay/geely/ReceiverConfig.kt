@@ -16,3 +16,14 @@ internal data class ReceiverConfig(val mode: ConnectionMode, val ssid: String, v
     // Deliberately never include Wi-Fi credentials in generated diagnostics.
     override fun toString() = "ReceiverConfig(mode=$mode, credentials=<redacted>)"
 }
+
+/** Same identity fallback as upstream when Android hides the physical Bluetooth address. */
+internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPlayIdentity, width: Int, height: Int): com.shilapi.xcertplay.airplay.AirPlayConfig {
+    val id = ReceiverStore.deviceId(identity)
+    return com.shilapi.xcertplay.airplay.AirPlayConfig(
+        "DiPlay Geely", id, id, "950.7.1",
+        com.shilapi.xcertplay.airplay.AirPlayDisplayConfig(width, height, fps = 30),
+        manufacturer = "DiPlay", model = "KX11_A2", oemLabel = "DiPlay Geely",
+        microphone = false, mainBufferedAudio = true,
+    )
+}

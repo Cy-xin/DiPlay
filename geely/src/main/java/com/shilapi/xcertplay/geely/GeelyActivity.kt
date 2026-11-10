@@ -206,7 +206,7 @@ class GeelyActivity : Activity() {
                     manualHotspotSsid=config.ssid,manualHotspotPassphrase=config.password,manualHotspotInterface=config.networkInterface,
                     manualHotspotSecurity=if(config.password.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2,
                     existingWifiSsid=config.ssid,existingWifiPassphrase=config.password)
-                val air=AirPlayConfig("DiPlay Geely",id,"", "950.7.1",AirPlayDisplayConfig(width,height,fps=30),manufacturer="DiPlay",model="KX11_A2",oemLabel="DiPlay Geely",microphone=false,mainBufferedAudio=true)
+                val air=receiverAirPlayConfig(identity,width,height)
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
@@ -249,7 +249,8 @@ class GeelyActivity : Activity() {
     }
     private fun friendlyFailure(message:String):String = when {
         message.contains("paired",true) || message.contains("bonded",true) -> "未找到明确的已配对 iPhone，请先完成蓝牙配对；多部手机时展开配置选择一部。"
-        message.contains("Bluetooth",true) -> "蓝牙通信不可用，请确认车机与 iPhone 蓝牙开启并已配对。若原车蓝牙不向 Android 提供 iAP2，需实车诊断。"
+        message.contains("bluetoothMac",true) -> "本机蓝牙标识无效，无法启动 CarPlay 握手。请查看本地诊断。"
+        message.contains("Bluetooth",true) || message.contains("RFCOMM",true) -> "蓝牙握手失败；普通配对并不代表 CarPlay 握手成功。请查看本地诊断中的具体原因。"
         message.contains("SSID",true) || message.contains("configuration",true) -> "网络配置不匹配，请核对名称、密码和接口。"
         message.contains("network changed",true) -> "Wi-Fi 已变化或断开，请恢复网络后重试。"
         else -> "未能完成 CarPlay 握手。请核对网络、蓝牙配对及手机授权；同一局域网还需允许设备互通和组播。详细阶段见本地诊断。"
