@@ -156,22 +156,23 @@ class GeelyActivity : Activity() {
         iface.isEnabled=mode==ConnectionMode.CAR_HOTSPOT
     }
     private fun saveInputs() { if(::ssid.isInitialized) store.prefs.edit().putString(key("ssid"),ssid.text.toString()).putString(key("password"),password.text.toString()).putString("interface",iface.text.toString().trim()).apply() }
-    private fun missingPermissions(): Array<String> = (if(Build.VERSION.SDK_INT>=31) listOf(Manifest.permission.BLUETOOTH_CONNECT) else emptyList()).filter { checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED }.toTypedArray()
+    private fun missingPermissions(): Array<String> = (listOf(Manifest.permission.RECORD_AUDIO) + if(Build.VERSION.SDK_INT>=31) listOf(Manifest.permission.BLUETOOTH_CONNECT) else emptyList()).filter { checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED }.toTypedArray()
     private fun requestNecessaryPermissions(): Boolean {
         val missing=missingPermissions()
         if(missing.isEmpty()) return true
+        update("CarPlay 音频协商需要麦克风权限；仅在 iPhone 请求麦克风通道时采集，不保存录音。")
         pendingPermissions=true;requestPermissions(missing,10);return false
     }
     override fun onRequestPermissionsResult(code:Int, permissions:Array<out String>, results:IntArray) {
         super.onRequestPermissionsResult(code,permissions,results)
         if(code==10 && pendingPermissions) {
             pendingPermissions=false
-            if(missingPermissions().isEmpty()) connect() else update("蓝牙权限被拒绝。请在系统应用权限中允许附近设备，然后重试。")
+            if(missingPermissions().isEmpty()) connect() else update(if(Manifest.permission.RECORD_AUDIO in missingPermissions()) "麦克风权限未允许，无法提供完整 CarPlay 音频能力。请允许麦克风权限后重试。" else "蓝牙权限被拒绝。请在系统应用权限中允许附近设备，然后重试。")
         }
     }
     private fun choosePhone() {
         try {
-        if(missingPermissions().isNotEmpty()) { update("请先点击连接并允许蓝牙权限，再选择手机。");return }
+        if(missingPermissions().isNotEmpty()) { update("请先点击连接并允许所需权限，再选择手机。");return }
         val devices=runCatching { getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.toList().orEmpty() }.getOrDefault(emptyList())
         if(devices.isEmpty()) { update("没有已配对手机，请先点击蓝牙配对。");return }
         val labels=arrayOf("自动选择")+devices.map { it.name ?: "已配对设备" }.toTypedArray()
@@ -211,9 +212,10 @@ class GeelyActivity : Activity() {
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
-                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,videoFps=30,onAudioDiagnostic={ log(it) })
+                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,videoFps=30,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
-                        val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer),{ onStatus(token,it) })
+                        val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{ onStatus(token,it) })
+                        log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio}")
                         controller=next;next.start()
                     } catch(e:Exception) { log("启动失败: "+e.javaClass.simpleName);endAttempt("无法启动连接：请检查本地诊断并重试。") }
                 }
@@ -233,6 +235,14 @@ class GeelyActivity : Activity() {
         override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) endAttempt("iPhone 已断开，可重新连接。") } }
         override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) endAttempt("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。") } }
         override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation) endAttempt("已返回连接页，可重新连接。") } }
+        override fun onCommand(session:AirPlaySession,type:String,params:Map<String,Any?>) {
+            if(token!=generation || type!="modesChanged") return
+            val resources=(params["resources"] as? List<*>).orEmpty().filterIsInstance<Map<*,*>>().map { row ->
+                row.filter { (key,value) -> key in setOf("resourceID","entityID","transferType","transferPriority") && (value is Number || value is Boolean) }
+            }
+            val detail="Audio: modes resources=$resources"
+            log(detail);android.util.Log.i("DiPlay-Audio",detail)
+        }
         override fun onDebugLog(message:String) { log(message) }
     }
     private fun onStatus(token:Int,state:CarPlayStatus) {

@@ -12,8 +12,9 @@ manifest=subprocess.check_output([str(aapt),'dump','xmltree',str(a.apk),'Android
 for component in ('service','receiver','provider'):
  assert not re.search(r'\bE: '+component+r'\b',manifest),f'Unexpected {component}'
 assert len(re.findall(r'\bE: activity\b',manifest))==1
-for perm in ('RECEIVE_BOOT_COMPLETED','SYSTEM_ALERT_WINDOW','WRITE_SETTINGS','READ_LOGS','REQUEST_INSTALL_PACKAGES','MANAGE_OWN_CALLS','RECORD_AUDIO','FOREGROUND_SERVICE'):
+for perm in ('RECEIVE_BOOT_COMPLETED','SYSTEM_ALERT_WINDOW','WRITE_SETTINGS','READ_LOGS','REQUEST_INSTALL_PACKAGES','MANAGE_OWN_CALLS','FOREGROUND_SERVICE'):
  assert perm not in badging,perm
+assert 'android.permission.RECORD_AUDIO' in badging
 with zipfile.ZipFile(a.apk) as z:
  for name in ('identity.pk8','certificate.p7b'):
   assert z.read('assets/offline-mfi/'+name)==(a.auth/'offline-mfi'/name).read_bytes()

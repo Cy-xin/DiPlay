@@ -50,6 +50,7 @@ class ReceiverTest {
         (field(activity,"password") as EditText).setText("")
         val worker=field(activity,"worker") as ExecutorService
         val gate=CountDownLatch(1);worker.execute { gate.await(5,TimeUnit.SECONDS) }
+        shadowOf(activity.application).grantPermissions(android.Manifest.permission.RECORD_AUDIO)
         invoke(activity,"connect");val first=field(activity,"generation")
         invoke(activity,"connect");assertEquals(first,field(activity,"generation"))
         GeelyActivity::class.java.getDeclaredMethod("endAttempt",String::class.java).apply { isAccessible=true }.invoke(activity,"cancelled")
@@ -100,4 +101,24 @@ class ReceiverTest {
         assertEquals(air.btMac,receiverAirPlayConfig(identity,1280,720).btMac)
     }
 
+    @Test fun productionAudioOfferIncludesInputAndOutputInsteadOfDisplayOnlyAudio() {
+        val air=receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1280,720)
+        val info=com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(air)
+        val formats=(info["audioFormats"] as List<*>).filterIsInstance<Map<*,*>>()
+        assertTrue("CarPlay must offer its actual microphone capability",air.microphone)
+        assertFalse(air.disableAudioOutput)
+        assertTrue(formats.any { it["audioType"]=="default" && (it["audioInputFormats"] as? Number)?.toInt()?.let { value -> value!=0 }==true })
+        assertTrue(formats.any { it["audioType"]=="media" && (it["audioOutputFormats"] as? Number)?.toInt()?.let { value -> value!=0 }==true })
+    }
+
+    @Test fun deniedMicrophonePermissionDoesNotStartAnAttemptOrAdvertiseAnUnusableInput() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        shadowOf(activity.application).denyPermissions(android.Manifest.permission.RECORD_AUDIO)
+        invoke(activity,"connect")
+        val request=shadowOf(activity).lastRequestedPermission
+        assertTrue(request.requestedPermissions.contains(android.Manifest.permission.RECORD_AUDIO))
+        activity.onRequestPermissionsResult(request.requestCode,request.requestedPermissions,IntArray(request.requestedPermissions.size) { android.content.pm.PackageManager.PERMISSION_DENIED })
+        assertEquals(false,field(activity,"busy"));assertEquals(0,field(activity,"generation"));assertNull(field(activity,"controller"));assertNull(field(activity,"leaseToken"))
+        lifecycle.pause().stop().destroy()
+    }
 }

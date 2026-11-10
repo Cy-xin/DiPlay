@@ -24,6 +24,6 @@ internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPl
         "DiPlay Geely", id, id, "950.7.1",
         com.shilapi.xcertplay.airplay.AirPlayDisplayConfig(width, height, fps = 30),
         manufacturer = "DiPlay", model = "KX11_A2", oemLabel = "DiPlay Geely",
-        microphone = false, mainBufferedAudio = true,
+        microphone = true, mainBufferedAudio = true,
     )
 }
