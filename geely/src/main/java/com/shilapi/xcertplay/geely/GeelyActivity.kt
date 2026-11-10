@@ -55,6 +55,8 @@ class GeelyActivity : Activity() {
     private var controller: CarPlayController? = null
     private var sink: AndroidMediaSink? = null
     private var currentSurface: Surface? = null
+    private var configuredWidth = 0
+    private var configuredHeight = 0
     private var busy = false
     private var currentAirPlaySession: AirPlaySession? = null
     private var connected = false
@@ -187,6 +189,7 @@ class GeelyActivity : Activity() {
         busy=true;update("正在检查配置和认证资产…");applyState()
         timeout=Runnable { if(token==generation && busy && !connected) endAttempt("连接超时。请确认 iPhone 已加入网络、蓝牙已配对，并在手机上允许 CarPlay；局域网需关闭客户端隔离并允许组播，然后重试。") }.also { main.postDelayed(it,90_000) }
         val width=(video.width.coerceAtLeast(640)/2)*2;val height=(video.height.coerceAtLeast(360)/2)*2
+        configuredWidth=width;configuredHeight=height
         worker.execute {
             try {
                 config.validate();store.installAuthentication()
@@ -289,7 +292,14 @@ class GeelyActivity : Activity() {
     }
     @Deprecated("Uses Activity back for Android 11 target")
     override fun onBackPressed() { if(busy || connected) endAttempt("已返回连接页，可重新连接。") else super.onBackPressed() }
-    override fun onConfigurationChanged(config:Configuration) { super.onConfigurationChanged(config);if(busy || connected) endAttempt("显示尺寸已变化，请重新连接。") }
+    override fun onConfigurationChanged(config:Configuration) {
+        super.onConfigurationChanged(config)
+        video.post {
+            if ((busy || connected) && ((video.width/2)*2 != configuredWidth || (video.height/2)*2 != configuredHeight)) {
+                endAttempt("显示尺寸已变化，请重新连接。")
+            }
+        }
+    }
     override fun onStop() { if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")

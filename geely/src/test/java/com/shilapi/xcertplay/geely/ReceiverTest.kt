@@ -67,4 +67,17 @@ class ReceiverTest {
         lifecycle.pause().stop().destroy()
     }
 
+    @Test fun systemNightModeDoesNotDisconnectAnUnchangedDisplay() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        (field(activity,"video") as android.view.View).layout(0,0,1280,720)
+        for((name,value) in listOf("configuredWidth" to 1280,"configuredHeight" to 720)) {
+            GeelyActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.set(activity,value)
+        }
+        GeelyActivity::class.java.getDeclaredField("busy").apply { isAccessible=true }.set(activity,true)
+        activity.onConfigurationChanged(android.content.res.Configuration(activity.resources.configuration).apply { uiMode=android.content.res.Configuration.UI_MODE_NIGHT_YES })
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(true,field(activity,"busy"))
+        lifecycle.pause().stop().destroy()
+    }
+
 }
