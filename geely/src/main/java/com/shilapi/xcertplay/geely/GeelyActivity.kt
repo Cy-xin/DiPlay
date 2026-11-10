@@ -61,6 +61,8 @@ class GeelyActivity : Activity() {
     private var currentAirPlaySession: AirPlaySession? = null
     private var connected = false
     private var stopping = false
+    private var leaseToken: Any? = null
+    private var foreground = false
     private var generation = 0
     private var destroyed = false
     private var pendingPermissions = false
@@ -180,8 +182,11 @@ class GeelyActivity : Activity() {
         } catch (_: SecurityException) { update("蓝牙权限已变化，请允许权限后重试。") }
     }
     private fun connect() {
-        if(busy || stopping || controller!=null || destroyed) return
+        if(busy || stopping || controller!=null || destroyed || !foreground) return
         if(!requestNecessaryPermissions()) return
+        val lease=Any()
+        if (!ReceiverSessionGate.acquire(lease)) { update("上一连接仍在释放，请稍后重试。");return }
+        leaseToken=lease
         saveInputs()
         val config=ReceiverConfig(mode,ssid.text.toString(),password.text.toString(),iface.text.toString().trim(),phone)
         secret=config.password
@@ -253,15 +258,17 @@ class GeelyActivity : Activity() {
         if(stopping) return
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
-        val old=controller;val renderer=sink;controller=null;sink=null
+        val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
         // close() cancels the blocking Bluetooth/network operations before queued preparation finishes.
         old?.close()
         worker.execute {
-            val released=old?.awaitClosed(8_000) ?: true
-            renderer?.close()
+            val transportReleased=old?.awaitClosed(8_000) ?: true
+            val mediaReleased=runCatching { renderer?.close() }.isSuccess
+            val released=transportReleased && mediaReleased
+            if (released) ReceiverSessionGate.release(lease)
             main.post { if(!destroyed) {
                 stopping=!released
-                update(if(released) reason else "连接资源尚未释放。请退出并重新打开应用，暂不创建新的连接任务。")
+                update(if(released) reason else "连接资源尚未释放，已阻止新任务。请在系统应用信息中强行停止本应用后重新打开。")
                 applyState()
             } }
         }
@@ -300,7 +307,8 @@ class GeelyActivity : Activity() {
             }
         }
     }
-    override fun onStop() { if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
+    override fun onStart() { super.onStart();foreground=true }
+    override fun onStop() { foreground=false;if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()

@@ -80,4 +80,15 @@ class ReceiverTest {
         lifecycle.pause().stop().destroy()
     }
 
+    @Test fun processGateBlocksAnotherActivityUntilTheOriginalAttemptReleases() {
+        val first=Any();val second=Any()
+        assertTrue(ReceiverSessionGate.acquire(first))
+        assertFalse(ReceiverSessionGate.acquire(second))
+        ReceiverSessionGate.release(second)
+        assertFalse(ReceiverSessionGate.acquire(second))
+        ReceiverSessionGate.release(first)
+        assertTrue(ReceiverSessionGate.acquire(second))
+        ReceiverSessionGate.release(second)
+    }
+
 }
