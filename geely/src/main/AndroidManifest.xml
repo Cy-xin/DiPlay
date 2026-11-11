@@ -14,7 +14,7 @@
 <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
-<application android:label="DiPlay Geely" android:theme="@style/GeelyTheme"
+<application android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:label="DiPlay Geely" android:theme="@style/GeelyTheme"
  android:enableOnBackInvokedCallback="true" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true">
 <!-- Only an explicitly started connection has a foreground service; no boot or polling. -->
 <service android:name=".ReceiverSessionService" android:exported="false" android:stopWithTask="true" android:foregroundServiceType="connectedDevice|mediaPlayback|microphone" />

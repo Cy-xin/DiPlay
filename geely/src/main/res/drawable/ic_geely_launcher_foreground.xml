@@ -1,0 +1,6 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Adaptive icons use a 108dp layer; keep the Geely mark inside its safe area. -->
+    <item android:left="24dp" android:top="24dp" android:right="24dp" android:bottom="24dp">
+        <bitmap android:src="@drawable/ic_geely_launcher_mark" android:gravity="fill" android:filter="true" />
+    </item>
+</layer-list>
