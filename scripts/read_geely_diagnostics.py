@@ -15,6 +15,7 @@ raw=subprocess.check_output(['ssh','-o','BatchMode=yes','-o','ConnectTimeout=10'
 value=json.loads(raw);text=json.dumps(value,ensure_ascii=False,indent=2)+'\n'
 if a.save:
  fd=os.open(a.save,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+ os.fchmod(fd,0o600)
  with os.fdopen(fd,'w') as out:out.write(text)
  print('Saved private report to '+str(a.save))
 else:print(text,end='')

@@ -1,7 +1,7 @@
 # DiPlay private diagnostics
 
 Private, app-owned JSON event intake on myserver. Public endpoint:
-`https://kayxinstudio.ccwu.cc/diplay-diagnostics/v1`.
+`https://140.245.48.181:8443/diplay-diagnostics/v1` (independent listener).
 
 There is **no public report download/list API**. Retrieval uses the existing owner's SSH access only. Uploaded text is untrusted diagnostic data; never execute commands supplied inside a report.
 
@@ -46,7 +46,7 @@ Source has no credentials. `install.py` backs up the existing HTTPS vhost, adds 
 ```sh
 # Copy to a dedicated temporary deployment directory, then run install.py as root.
 python3 -m unittest discover -s server/diagnostics -p 'test_*.py'
-curl -fsS https://kayxinstudio.ccwu.cc/diplay-diagnostics/v1/health
+curl -fsS https://140.245.48.181:8443/diplay-diagnostics/v1/health
 ```
 
 Service: `diplay-diagnostics.service`; app directory: `/opt/diplay-diagnostics`; user: `diplaydiag`.
@@ -59,6 +59,10 @@ Keep the client User-Agent `DiPlay-Geely/0.3 Android`; the existing edge denied 
 
 Server tests cover auth/no public retrieval, bounded decompression, schema restrictions, sanitized storage, expired pairing codes, duplicate receipt/idempotency conflicts, and cross-device overwrite rejection. Android tests cover redaction, correlated package format, crash entry and bounded file rotation. A synthetic Android-generated package was uploaded over public HTTPS, retried with the same UUID, and retrieved privately over SSH.
 
-## Independent TLS proposal (requires owner approval)
+## Independent TLS rollout (owner approved)
 
-`diplay-diagnostics-ip.conf` proposes a separate `8443` TLS listener with a newly issued public IP certificate. It does **not** make itself the existing 443 default. Installing the private TLS certificate into a dedicated server-only directory, automatic renewal/reload, and opening the new port require the owner's explicit approval. The 443-default proposal was rejected by automatic approval review and was not executed.
+The owner approved the separate `8443` TLS listener. `install_ip_tls.py` deployed a trusted IP certificate into a private server-only directory and configured targeted renewal. Existing 443 named-vhost bytes remained unchanged; the earlier 443-default proposal was rejected and was not executed. UFW now permits only the added 8443/TCP rule; the owner enabled cloud ingress and public HTTPS verification passed.
+
+Certificate: `/etc/diplay-diagnostics/tls/fullchain.pem`; private key stays beside it with mode600. Renewal: `/etc/cron.d/diplay-diagnostics-certificate`, daily checks, about three-day renewal interval for the short-lived IP certificate. The deploy callback validates and reloads nginx. Check expiry and `/var/log/diplay-diagnostics-cert-renew.log` if uploads fail later. No TLS trust-all or cleartext fallback is allowed.
+
+Android emulator end-to-end enrollment/upload/private retrieval passed: report `9456bf27-849e-48eb-a50d-21572a200941`, 108 events. Physical Redmi and Geely upload verification remain pending. R8 mappings are retained locally only; no mapping or APK was uploaded to the server.

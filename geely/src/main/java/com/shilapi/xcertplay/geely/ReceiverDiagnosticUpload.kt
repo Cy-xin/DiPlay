@@ -18,7 +18,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 internal class ReceiverDiagnosticUpload(private val context:Context,private val journal:ReceiverDiagnostics) {
     private val prefs=context.getSharedPreferences("diagnostics",Context.MODE_PRIVATE)
-    private val endpoint="https://kayxinstudio.ccwu.cc/diplay-diagnostics/v1"
+    private val endpoint="https://140.245.48.181:8443/diplay-diagnostics/v1"
     val enrolled get()=prefs.contains("encrypted_upload_token")
     val lastReport get()=prefs.getString("last_report","").orEmpty()
     private fun key():SecretKey {

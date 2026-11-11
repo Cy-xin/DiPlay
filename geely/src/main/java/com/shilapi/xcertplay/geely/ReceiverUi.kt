@@ -259,7 +259,7 @@ internal class ReceiverUiState {
                                 modifier=Modifier.semantics {contentDescription="隐藏状态栏和侧边栏 / Hide system bars"})
                         }
                     }
-                    if(matches(diagnostics,"日志","记录","log")) {found=true;section(diagnostics);SettingsRow(tr("日志与上传","Logs & upload"),tr("全程操作记录、问题说明与诊断编号","Operation history, issue notes and report ID"),true,onLogs)}
+                    if(matches(diagnostics,"日志","记录","log","上传","upload","服务器","server")) {found=true;section(diagnostics);SettingsRow(tr("日志与上传","Logs & upload"),tr("全程操作记录、问题说明与诊断编号","Operation history, issue notes and report ID"),true,onLogs)}
                     if(!found) Text(tr("未找到设置，请换个关键词。","No settings found. Try another keyword."),Modifier.padding(16.dp))
                 }
             }
