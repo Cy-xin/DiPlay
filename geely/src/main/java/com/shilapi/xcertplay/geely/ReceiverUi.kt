@@ -73,7 +73,7 @@ internal class ReceiverUiState {
     if(LocalConfiguration.current.locales[0].language=="en") en else zh
 
 @Composable internal fun ReceiverApp(
-    ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,onHome:()->Unit,
+    ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
     onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
 ) {
@@ -93,12 +93,8 @@ internal class ReceiverUiState {
         if(theme==null) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         if(theme!=null) {
             if(ui.connected && ui.showCarPlay) {
-                Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                    Row(Modifier.align(Alignment.TopEnd).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onHome,Modifier.heightIn(min=48.dp),shape=ReceiverTokens.control) {Text(tr("返回 DiPlay","Back to DiPlay"),fontSize=14.sp)}
-                        FilledTonalButton(onDisconnect,Modifier.heightIn(min=48.dp),shape=ReceiverTokens.control) {Text(tr("断开","Disconnect"),fontSize=14.sp)}
-                    }
-                }
+                // Transparent, non-interactive host layer: all CarPlay touches reach SurfaceView.
+                Box(Modifier.fillMaxSize())
             } else {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal=ReceiverTokens.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {

@@ -116,7 +116,6 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     onUpload={retry -> uploadDiagnostics(retry) },
                     onPairUpload={code -> pairDiagnostics(code) },
                     onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(busy) endAttempt("已取消连接") else connect() },
-                    onHome={showReceiverHome()},
                     onDisconnect={ journal.event("operation","disconnect_pressed");endAttempt("已断开，可重新连接") },
                     onBluetooth={ journal.event("operation","open_system_bluetooth");saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     onPhone={ loadPhoneChoices() },

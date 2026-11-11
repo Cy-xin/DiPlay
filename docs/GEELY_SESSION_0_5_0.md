@@ -24,3 +24,7 @@
 连接iPhone，确认吉利图标显示；依次返回DiPlay、返回车机桌面、重新打开并返回CarPlay，确认没有新配对/连接任务且音频持续；播放音乐并触发多段导航、Siri与通话，确认导航压低而非静音、结束恢复且真正播放状态没有异常。检查通知返回和主动断开后服务停止。手机与车机两种网络模式均需确认。自动化模拟和编译均不能代替实车验收。
 
 失败时通过“诊断”上传，按session/attempt关联background_retained、receiver_home_shown、carplay_shown、surface_fit、connection_service_started/stopped、Audio navigation overlay等事件；若iPhone实际暂停，还需结合具体导航应用和流类型继续判断，不宣称本次离线检查已经排除所有来源。
+
+## 后续用户反馈
+
+用户在Redmi测试0.5.0后回复“没问题，其他没问题”，并要求去掉CarPlay右上角两个按钮；图标、返回保连接与导航音乐效果获得该次用户确认。0.5.1按此移除覆盖按钮。该反馈不代表吉利实车或长时间稳定性全部验证完成。
