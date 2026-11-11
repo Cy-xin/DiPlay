@@ -38,6 +38,13 @@ class GeelyActivity : Activity() {
     private lateinit var store: ReceiverStore
     private lateinit var root: FrameLayout
     private lateinit var form: LinearLayout
+    private lateinit var setupPage: LinearLayout
+    private lateinit var body: LinearLayout
+    private lateinit var modes: RadioGroup
+    private lateinit var footer: LinearLayout
+    private lateinit var configurationScroll: ScrollView
+    private lateinit var scrollingContent: LinearLayout
+    private var wideLayout: Boolean? = null
     private lateinit var status: TextView
     private lateinit var primary: Button
     private lateinit var modeHotspot: RadioButton
@@ -69,12 +76,12 @@ class GeelyActivity : Activity() {
     private var timeout: Runnable? = null
     private var secret = ""
     private var message = "未连接。请先按说明连接网络并配对蓝牙。"
-    private val panelColor = Color.rgb(24,33,43)
-    private val inkColor = Color.rgb(241,246,250)
+    private val panelColor = Color.rgb(23,44,50)
+    private val inkColor = Color.rgb(242,244,239)
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Float = 18f) = TextView(this).apply { text=value; textSize=size; setTextColor(inkColor) }
     private fun button(value: String, action: () -> Unit) = Button(this).apply {
-        text=value; isAllCaps=false; textSize=18f; minHeight=dp(56); setOnClickListener { action() }
+        text=value; isAllCaps=false; textSize=18f; minHeight=dp(56); setTextColor(inkColor); backgroundTintList=android.content.res.ColorStateList.valueOf(Color.rgb(36,61,67)); setOnClickListener { action() }
     }
     private fun field(label: String, hidden: Boolean = false) = EditText(this).apply {
         hint=label; textSize=20f; setTextColor(inkColor); setHintTextColor(Color.LTGRAY)
@@ -114,45 +121,83 @@ class GeelyActivity : Activity() {
             }
             true
         }
-        val scroll=ScrollView(this).apply { isFillViewport=true; setBackgroundColor(panelColor) }
-        form=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(28),dp(16),dp(28),dp(20)) }
-        scroll.addView(form);root.addView(scroll,FrameLayout.LayoutParams(-1,-1))
-        form.addView(text("DiPlay Geely",24f).apply { setTypeface(null,Typeface.BOLD) })
-        val modes=RadioGroup(this).apply { orientation=RadioGroup.HORIZONTAL }
-        modeHotspot=RadioButton(this).apply { id=View.generateViewId();text="车机热点";textSize=20f;setTextColor(inkColor);minHeight=dp(56) }
-        modeLan=RadioButton(this).apply { id=View.generateViewId();text="同一局域网";textSize=20f;setTextColor(inkColor);minHeight=dp(56) }
-        modes.addView(modeHotspot,LinearLayout.LayoutParams(0,dp(56),1f));modes.addView(modeLan,LinearLayout.LayoutParams(0,dp(56),1f))
-        form.addView(modes);modes.check(if(mode==ConnectionMode.CAR_HOTSPOT) modeHotspot.id else modeLan.id)
-        help=text("",16f);form.addView(help)
-        ssid=field("热点或 Wi-Fi 名称");password=field("密码（开放网络留空）",true);iface=field("网络接口，例如 wlan0")
-        val fields=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
-        val left=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
-        val right=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(24),0,0,0) }
-        left.addView(text("网络名称"));left.addView(ssid);left.addView(text("网络密码"));left.addView(password)
-        right.addView(text("低频配置"));right.addView(button("展开 / 收起") { iface.visibility=if(iface.visibility==View.VISIBLE) View.GONE else View.VISIBLE;phoneButton.visibility=iface.visibility })
-        iface.visibility=View.GONE;right.addView(iface)
-        phoneButton=button(phoneName) { choosePhone() }.apply { visibility=View.GONE };right.addView(phoneButton)
-        fields.addView(left,LinearLayout.LayoutParams(0,-2,1f));fields.addView(right,LinearLayout.LayoutParams(0,-2,1f));form.addView(fields)
-        val actions=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
-        primary=button("连接 CarPlay") { if(busy) endAttempt("已取消连接") else connect() }.apply { backgroundTintList=android.content.res.ColorStateList.valueOf(Color.rgb(95,168,255));setTextColor(Color.BLACK) }
-        actions.addView(primary,LinearLayout.LayoutParams(0,dp(60),1f))
-        actions.addView(button("蓝牙配对") { saveInputs(); startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },LinearLayout.LayoutParams(0,dp(60),1f))
-        form.addView(actions)
-        status=text(message);status.setPadding(0,dp(12),0,0);status.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE;form.addView(status)
-        right.addView(button("查看本地诊断") { showLogs() })
+        setupPage=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL; setBackgroundColor(panelColor)
+            setPadding(dp(20),dp(8),dp(20),dp(12))
+        }
+        root.addView(setupPage,FrameLayout.LayoutParams(-1,-1))
+        val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        header.addView(text("DiPlay Geely",26f).apply { setTypeface(null,Typeface.BOLD) },LinearLayout.LayoutParams(0,-2,1f))
+        header.addView(button("蓝牙配对") { saveInputs(); startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) })
+        header.addView(button("诊断") { showLogs() })
+        setupPage.addView(header)
+        body=LinearLayout(this)
+        setupPage.addView(body,LinearLayout.LayoutParams(-1,0,1f))
+        modes=RadioGroup(this)
+        modeHotspot=RadioButton(this).apply { id=View.generateViewId();text="车机热点";textSize=20f;setTextColor(inkColor);minHeight=dp(64) }
+        modeLan=RadioButton(this).apply { id=View.generateViewId();text="同一局域网";textSize=20f;setTextColor(inkColor);minHeight=dp(64) }
+        modes.addView(modeHotspot);modes.addView(modeLan)
+        body.addView(modes)
+        configurationScroll=ScrollView(this).apply { isFillViewport=true }
+        scrollingContent=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+        configurationScroll.addView(scrollingContent)
+        form=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(12)) }
+        scrollingContent.addView(form);body.addView(configurationScroll)
+        help=text("",16f).apply { setTextColor(Color.rgb(167,186,182));setPadding(0,0,0,dp(12)) };form.addView(help)
+        ssid=field("热点或 Wi-Fi 名称");password=field("开放网络可留空",true);iface=field("网络接口，例如 wlan0")
+        form.addView(text("网络名称",16f));form.addView(ssid,LinearLayout.LayoutParams(-1,-2))
+        form.addView(text("网络密码",16f).apply { setPadding(0,dp(8),0,0) });form.addView(password,LinearLayout.LayoutParams(-1,-2))
+        val options=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
+        form.addView(button("连接选项") { options.visibility=if(options.visibility==View.VISIBLE) View.GONE else View.VISIBLE })
+        options.addView(text("热点网络接口",16f));options.addView(iface)
+        phoneButton=button(phoneName) { choosePhone() };options.addView(phoneButton);form.addView(options)
+        footer=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(8),0,0) }
+        status=text(message,16f).apply {
+            maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END
+            accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE
+            setOnClickListener { showLogs() }
+        }
+        footer.addView(status)
+        primary=button("连接 CarPlay") { if(busy) endAttempt("已取消连接") else connect() }.apply {
+            backgroundTintList=android.content.res.ColorStateList.valueOf(Color.rgb(201,222,176));setTextColor(panelColor)
+        }
+        footer.addView(primary);setupPage.addView(footer)
+        // Measure the actual inset-adjusted window, including keyboard and split-screen changes.
+        setupPage.addOnLayoutChangeListener { _,l,t,r,b,_,_,_,_ -> adaptLayout(r-l,b-t) }
         disconnect=button("断开 CarPlay") { endAttempt("已断开，可重新连接") }.apply { visibility=View.GONE;alpha=.9f }
         root.addView(disconnect,FrameLayout.LayoutParams(dp(164),dp(56),Gravity.TOP or Gravity.END))
         setContentView(root)
+        modes.check(if(mode==ConnectionMode.CAR_HOTSPOT) modeHotspot.id else modeLan.id)
         modes.setOnCheckedChangeListener { _,id ->
             saveInputs(); mode=if(id==modeHotspot.id) ConnectionMode.CAR_HOTSPOT else ConnectionMode.SAME_LAN
             store.prefs.edit().putString("mode",mode.name).apply();loadInputs()
         }
         loadInputs();applyState()
     }
+    private fun adaptLayout(width: Int, height: Int) {
+        if(width<=0 || height<=0) return
+        // Font scale affects the breakpoint: never squeeze large text into a fixed two-column layout.
+        val effectiveWidth=width/resources.displayMetrics.density/resources.configuration.fontScale.coerceAtLeast(1f)
+        val wide=effectiveWidth>=720f
+        if(wideLayout==wide) return
+        wideLayout=wide
+        body.orientation=if(wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        modes.orientation=if(wide) RadioGroup.VERTICAL else RadioGroup.HORIZONTAL
+        (modes.parent as android.view.ViewGroup).removeView(modes)
+        if(wide) body.addView(modes,0) else scrollingContent.addView(modes,0)
+        modes.layoutParams=LinearLayout.LayoutParams(if(wide) dp(208) else -1, -2)
+        listOf(modeHotspot,modeLan).forEach {
+            it.layoutParams=RadioGroup.LayoutParams(if(wide) -1 else 0,-2,if(wide) 0f else 1f)
+        }
+        configurationScroll.layoutParams=if(wide) LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f)
+        footer.orientation=if(wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        status.layoutParams=if(wide) LinearLayout.LayoutParams(0,-2,1f) else LinearLayout.LayoutParams(-1,-2)
+        primary.layoutParams=LinearLayout.LayoutParams(if(wide) dp(224) else -1,-2)
+    }
     private fun key(name: String) = "${mode.name}_$name"
     private fun loadInputs() {
         ssid.setText(store.prefs.getString(key("ssid"),""));password.setText(store.prefs.getString(key("password"),""));iface.setText(store.prefs.getString("interface","wlan0"))
-        help.text=if(mode==ConnectionMode.CAR_HOTSPOT) "在原车设置开启热点，让 iPhone 加入该热点。保持蓝牙开启并完成配对，再点击连接。" else "车机与 iPhone 加入同一 Wi-Fi，保持蓝牙配对。网络需允许设备互通和组播；暂不支持企业认证或网页登录。"
+        help.text=if(mode==ConnectionMode.CAR_HOTSPOT) "开启原车热点，让 iPhone 加入并完成蓝牙配对。" else "两台设备加入同一 Wi-Fi 并配对蓝牙；网络需允许设备互通和组播。"
         iface.isEnabled=mode==ConnectionMode.CAR_HOTSPOT
     }
     private fun saveInputs() { if(::ssid.isInitialized) store.prefs.edit().putString(key("ssid"),ssid.text.toString()).putString(key("password"),password.text.toString()).putString("interface",iface.text.toString().trim()).apply() }
@@ -194,7 +239,12 @@ class GeelyActivity : Activity() {
         val token=++generation
         busy=true;update("正在检查配置和认证资产…");applyState()
         timeout=Runnable { if(token==generation && busy && !connected) endAttempt("连接超时。请确认 iPhone 已加入网络、蓝牙已配对，并在手机上允许 CarPlay；局域网需关闭客户端隔离并允许组播，然后重试。") }.also { main.postDelayed(it,90_000) }
-        val width=(video.width.coerceAtLeast(640)/2)*2;val height=(video.height.coerceAtLeast(360)/2)*2
+        val width=(video.width/2)*2;val height=(video.height/2)*2
+        if(width<2 || height<2) {
+            busy=false;ReceiverSessionGate.release(leaseToken);leaseToken=null
+            timeout?.let(main::removeCallbacks);timeout=null
+            update("显示区域尚未就绪，请稍后重试。");applyState();return
+        }
         configuredWidth=width;configuredHeight=height
         worker.execute {
             try {
@@ -212,7 +262,7 @@ class GeelyActivity : Activity() {
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
-                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,videoFps=30,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,mediaBufferMillis=200,videoFps=30,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{ onStatus(token,it) })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio}")
@@ -285,7 +335,7 @@ class GeelyActivity : Activity() {
         }
     }
     private fun applyState() {
-        (form.parent as View).visibility=if(connected) View.GONE else View.VISIBLE
+        setupPage.visibility=if(connected) View.GONE else View.VISIBLE
         disconnect.visibility=if(connected) View.VISIBLE else View.GONE
         primary.text=if(stopping) "正在结束连接…" else if(busy) "取消连接" else "连接 CarPlay"
         primary.isEnabled=!stopping

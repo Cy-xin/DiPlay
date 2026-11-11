@@ -13,7 +13,7 @@
 <application android:label="DiPlay Geely" android:theme="@style/GeelyTheme"
  android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="false">
 <activity android:name=".GeelyActivity" android:exported="true" android:screenOrientation="sensorLandscape"
- android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:launchMode="singleTop">
+ android:configChanges="keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:launchMode="singleTop">
 <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
 </activity>
 </application></manifest>

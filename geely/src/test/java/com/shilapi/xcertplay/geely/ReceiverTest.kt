@@ -19,6 +19,30 @@ import java.util.concurrent.TimeUnit
 class ReceiverTest {
     private fun field(activity:GeelyActivity, name:String):Any? = GeelyActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.get(activity)
     private fun invoke(activity:GeelyActivity,name:String) = GeelyActivity::class.java.getDeclaredMethod(name).apply { isAccessible=true }.invoke(activity)
+    @Test fun setupKeepsPrimaryAndStatusInsideWindowAcrossWidthsAndLargeFonts() {
+        for(font in listOf(1f,1.35f)) {
+            val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+            val activity=lifecycle.get()
+            activity.resources.configuration.fontScale=font
+            val page=field(activity,"setupPage") as android.view.View
+            val primary=field(activity,"primary") as android.view.View
+            val status=field(activity,"status") as android.view.View
+            for((width,height) in listOf(1280 to 600,1024 to 480,640 to 360,480 to 600)) {
+                repeat(3) {
+                    page.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(height,android.view.View.MeasureSpec.EXACTLY))
+                    page.layout(0,0,width,height)
+                }
+                for(view in listOf(primary,status)) {
+                    val bounds=android.graphics.Rect(0,0,view.width,view.height)
+                    (page as android.view.ViewGroup).offsetDescendantRectToMyCoords(view,bounds)
+                    assertTrue("$width x $height font=$font: $bounds",bounds.top>=0 && bounds.bottom<=height && bounds.left>=0 && bounds.right<=width)
+                    assertTrue(view.height>0 && view.width>0)
+                }
+            }
+            lifecycle.pause().stop().destroy()
+        }
+    }
+
     @Test fun rejectsOversizeUtf8SsidAndInvalidPasswordWithoutLoggingCredentials() {
         for(config in listOf(ReceiverConfig(ConnectionMode.SAME_LAN,"中".repeat(11),"12345678","",null),ReceiverConfig(ConnectionMode.SAME_LAN,"wifi","short","",null))) {
             try { config.validate();fail("Expected invalid configuration") } catch(_:IllegalArgumentException) {}
@@ -48,6 +72,7 @@ class ReceiverTest {
         (field(activity,"modeLan") as RadioButton).isChecked=true
         (field(activity,"ssid") as EditText).setText("Router")
         (field(activity,"password") as EditText).setText("")
+        (field(activity,"video") as android.view.View).layout(0,0,1280,720)
         val worker=field(activity,"worker") as ExecutorService
         val gate=CountDownLatch(1);worker.execute { gate.await(5,TimeUnit.SECONDS) }
         shadowOf(activity.application).grantPermissions(android.Manifest.permission.RECORD_AUDIO)
