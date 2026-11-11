@@ -45,8 +45,8 @@ internal class ReceiverAppearance(context:Context) {
 }
 internal object ReceiverTokens {
     val gap=8.dp
-    val page=24.dp
-    val touch=56.dp
+    val page=16.dp
+    val touch=48.dp
     val panel=RoundedCornerShape(24.dp)
     val control=RoundedCornerShape(16.dp)
     val light=lightColorScheme(background=Color(0xFFEEF2F7),surface=Color(0xFFFAFCFF),

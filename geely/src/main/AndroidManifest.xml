@@ -15,7 +15,7 @@
 <!-- Foreground-only receiver: no dependency-driven startup or profiling entry points. -->
 <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="remove" tools:ignore="MissingClass" />
 <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove" tools:ignore="MissingClass" />
-<activity android:name=".GeelyActivity" android:exported="true" android:screenOrientation="sensorLandscape"
+<activity android:name=".GeelyActivity" android:exported="true"
  android:configChanges="keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode" android:launchMode="singleTop">
 <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
 </activity>

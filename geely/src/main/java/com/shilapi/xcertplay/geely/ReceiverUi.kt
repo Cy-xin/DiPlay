@@ -77,7 +77,7 @@ internal class ReceiverUiState {
             if(ui.connected) {
                 Box(Modifier.fillMaxSize().safeDrawingPadding()) {
                     FilledTonalButton(onDisconnect,Modifier.align(Alignment.TopEnd).padding(16.dp).heightIn(min=56.dp),shape=ReceiverTokens.control) {
-                        Text(tr("断开 CarPlay","Disconnect CarPlay"),fontSize=18.sp)
+                        Text(tr("断开 CarPlay","Disconnect CarPlay"),fontSize=16.sp)
                     }
                 }
             } else {
@@ -103,9 +103,9 @@ internal class ReceiverUiState {
         Column(Modifier.fillMaxSize().padding(padding),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 12.dp)) {
             GlassSurface(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                    Text("DiPlay Geely",Modifier.weight(1f),fontSize=if(short) 24.sp else 28.sp,fontWeight=FontWeight.SemiBold,
+                    Text("DiPlay Geely",Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold,
                         color=MaterialTheme.colorScheme.onSurface,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    TextButton({ ui.notice="";ui.settingsOpen=true },Modifier.heightIn(min=48.dp)) { Text(tr("设置","Settings"),fontSize=18.sp) }
+                    TextButton({ ui.notice="";ui.settingsOpen=true },Modifier.heightIn(min=48.dp)) { Text(tr("设置","Settings"),fontSize=16.sp) }
                 }
             }
             if(wide) {
@@ -128,12 +128,12 @@ internal class ReceiverUiState {
         val selected=ui.mode==mode
         val haptic=LocalHapticFeedback.current
         Surface(onClick={ haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onMode(mode) },enabled=ui.editable,
-            modifier=modifier.heightIn(min=64.dp).semantics { role=Role.RadioButton;this.selected=selected },
+            modifier=modifier.heightIn(min=56.dp).semantics { role=Role.RadioButton;this.selected=selected },
             shape=ReceiverTokens.control,color=if(selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent) {
-            Row(Modifier.padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+            Row(Modifier.padding(horizontal=4.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
                 RadioButton(selected,null,enabled=ui.editable)
                 Text(if(mode==ConnectionMode.CAR_HOTSPOT) tr("车机热点","Car hotspot") else tr("同一局域网","Same Wi-Fi"),
-                    Modifier.padding(end=8.dp),fontSize=20.sp,fontWeight=if(selected) FontWeight.SemiBold else FontWeight.Normal)
+                    Modifier.padding(end=8.dp),fontSize=16.sp,fontWeight=if(selected) FontWeight.SemiBold else FontWeight.Normal)
             }
         }
     }
@@ -148,20 +148,20 @@ internal class ReceiverUiState {
 }
 @Composable private fun ConnectionFields(ui:ReceiverUiState,inline:Boolean=false) {
     var reveal by rememberSaveable { mutableStateOf(false) }
-    Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
         Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("开启原车热点，让 iPhone 加入并完成蓝牙配对。","Turn on the car hotspot. Join it on iPhone and pair Bluetooth.")
             else tr("两台设备加入同一 Wi-Fi 并配对蓝牙；网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),
-            color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=16.sp)
+            color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp)
         @Composable fun name(modifier:Modifier) {
             OutlinedTextField(ui.ssid,{ ui.ssid=it },modifier,enabled=ui.editable,
-                label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
+                textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
                 isError=ui.attempted && ui.ssid.isBlank(),
                 supportingText=if(ui.attempted && ui.ssid.isBlank()) ({Text(tr("请输入网络名称","Enter the network name"))}) else null,
                 keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Next))
         }
         @Composable fun password(modifier:Modifier) {
             OutlinedTextField(ui.password,{ui.password=it},modifier,enabled=ui.editable,
-                label={Text(tr("网络密码","Network password"))},placeholder={Text(tr("开放网络可留空","Leave empty for an open network"))},
+                textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络密码","Network password"))},placeholder={Text(tr("开放网络可留空","Leave empty for an open network"))},
                 visualTransformation=if(reveal) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,imeAction=ImeAction.Done),
                 trailingIcon={ TextButton({reveal=!reveal},Modifier.sizeIn(minWidth=56.dp,minHeight=56.dp)) {Text(if(reveal) tr("隐藏","Hide") else tr("显示","Show"))} },
@@ -170,7 +170,7 @@ internal class ReceiverUiState {
         if(inline) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.Top) {
             name(Modifier.weight(1f));password(Modifier.weight(1f))
         } else { name(Modifier.fillMaxWidth());password(Modifier.fillMaxWidth()) }
-        TextButton({ui.notice="";ui.settingsOpen=true},Modifier.heightIn(min=56.dp)) {Text(tr("连接与播放设置","Connection & playback settings"),fontSize=16.sp)}
+        TextButton({ui.notice="";ui.settingsOpen=true},Modifier.heightIn(min=56.dp)) {Text(tr("连接与播放设置","Connection & playback settings"),fontSize=14.sp)}
     }
 }
 @Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit) {
@@ -180,13 +180,13 @@ internal class ReceiverUiState {
     @Composable fun status(modifier:Modifier) {
         Column(modifier.semantics { liveRegion=LiveRegionMode.Polite }) {
             if(ui.busy && !ui.stopping) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom=8.dp))
-            Text(tr(ui.message,receiverStatusEnglish(ui.message)),fontSize=16.sp,color=MaterialTheme.colorScheme.onSurface,maxLines=2,overflow=TextOverflow.Ellipsis)
+            Text(tr(ui.message,receiverStatusEnglish(ui.message)),fontSize=14.sp,color=MaterialTheme.colorScheme.onSurface,maxLines=2,overflow=TextOverflow.Ellipsis)
         }
     }
     @Composable fun action(modifier:Modifier) {
         Button({ ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary() },
-            modifier.heightIn(min=64.dp),enabled=!ui.stopping,shape=ReceiverTokens.control) {
-            Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=20.sp)
+            modifier.heightIn(min=56.dp),enabled=!ui.stopping,shape=ReceiverTokens.control) {
+            Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
         }
     }
     GlassSurface(Modifier.fillMaxWidth()) {
@@ -205,15 +205,15 @@ internal class ReceiverUiState {
             .widthIn(max=if(wide) 540.dp else maxWidth).fillMaxHeight()) {
             Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
-                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=26.sp,fontWeight=FontWeight.SemiBold)
+                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold)
                     TextButton({ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
                 }
                 OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
-                    Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=16.sp)
+                    Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     fun matches(vararg words:String)=query.isBlank() || words.any {it.contains(query,true)}
-                    @Composable fun section(title:String) { Text(title,Modifier.padding(top=16.dp,bottom=4.dp),fontSize=20.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary) }
+                    @Composable fun section(title:String) { Text(title,Modifier.padding(top=16.dp,bottom=4.dp),fontSize=14.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary) }
                     val connection=tr("连接","Connection");val playback=tr("播放","Playback");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
                     var found=false
                     if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
@@ -231,7 +231,7 @@ internal class ReceiverUiState {
                         ReceiverThemeMode.entries.forEach { mode ->
                             Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable {onTheme(mode)}.semantics {role=Role.RadioButton;selected=mode==theme},verticalAlignment=Alignment.CenterVertically) {
                                 RadioButton(mode==theme,null)
-                                Text(when(mode) {ReceiverThemeMode.SYSTEM->tr("跟随系统","Follow system");ReceiverThemeMode.LIGHT->tr("浅色","Light");else->tr("深色","Dark")},fontSize=18.sp)
+                                Text(when(mode) {ReceiverThemeMode.SYSTEM->tr("跟随系统","Follow system");ReceiverThemeMode.LIGHT->tr("浅色","Light");else->tr("深色","Dark")},fontSize=14.sp)
                             }
                         }
                         if(themeError) Text(tr("外观保存失败，请重试。","Could not save appearance. Try again."),color=MaterialTheme.colorScheme.error)
@@ -246,7 +246,7 @@ internal class ReceiverUiState {
 @Composable private fun SettingsRow(title:String,subtitle:String,enabled:Boolean,onClick:()->Unit) {
     Surface(onClick,enabled=enabled,shape=ReceiverTokens.control,color=MaterialTheme.colorScheme.surface.copy(alpha=.7f),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text(title,fontSize=18.sp,color=MaterialTheme.colorScheme.onSurface)
+            Text(title,fontSize=16.sp,color=MaterialTheme.colorScheme.onSurface)
             Text(subtitle,fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -264,7 +264,7 @@ internal class ReceiverUiState {
         Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
             if(dialog!=ReceiverDialog.PHONE) Text(if(dialog==ReceiverDialog.AUDIO)
                 tr("下次连接生效。较低缓冲响应更快，但更易断音；这不是整条链路的总延迟。","Applies next connection. Lower buffering can respond faster but may stutter; this is not total link latency.")
-                else tr("下次连接生效。60 帧负载更高；当前实现暂不支持 120 帧。","Applies next connection. 60 fps increases load; 120 fps is not supported by this implementation."),fontSize=16.sp)
+                else tr("下次连接生效。60 帧负载更高；当前实现暂不支持 120 帧。","Applies next connection. 60 fps increases load; 120 fps is not supported by this implementation."),fontSize=14.sp)
             val options=when(dialog) {ReceiverDialog.AUDIO->ReceiverPlaybackSettings.bufferChoices.map {"${it}ms"};ReceiverDialog.FPS->ReceiverPlaybackSettings.fpsChoices.map {"$it fps"};else->ui.phoneChoices.map {it.second}}
             options.forEachIndexed {index,label ->
                 val selected=when(dialog) {ReceiverDialog.AUDIO->ReceiverPlaybackSettings.bufferChoices[index]==ui.bufferMs;ReceiverDialog.FPS->ReceiverPlaybackSettings.fpsChoices[index]==ui.fps;else->false}
@@ -275,7 +275,7 @@ internal class ReceiverUiState {
                         ui.dialog=null
                     }
                 }.semantics { role=Role.RadioButton;this.selected=selected },verticalAlignment=Alignment.CenterVertically) {
-                    RadioButton(selected,null,enabled=ui.editable);Text(label,fontSize=18.sp)
+                    RadioButton(selected,null,enabled=ui.editable);Text(label,fontSize=16.sp)
                 }
             }
         }

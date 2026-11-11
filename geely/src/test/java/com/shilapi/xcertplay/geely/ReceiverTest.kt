@@ -18,6 +18,12 @@ import java.util.concurrent.TimeUnit
 class ReceiverTest {
     private fun field(activity:GeelyActivity, name:String):Any? = GeelyActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.get(activity)
     private fun invoke(activity:GeelyActivity,name:String) = GeelyActivity::class.java.getDeclaredMethod(name).apply { isAccessible=true }.invoke(activity)
+    @Test fun hostWindowControlsOrientationInsteadOfForcingLandscape() {
+        val app=org.robolectric.RuntimeEnvironment.getApplication()
+        val info=app.packageManager.getActivityInfo(android.content.ComponentName(app,GeelyActivity::class.java),0)
+        assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,info.screenOrientation)
+    }
+
     @Test fun compactAndLargeFontWindowsUseScrollableSingleColumn() {
         assertTrue(ReceiverLayoutPolicy.twoColumns(1280f,1f))
         assertTrue(ReceiverLayoutPolicy.twoColumns(1024f,1.35f))
