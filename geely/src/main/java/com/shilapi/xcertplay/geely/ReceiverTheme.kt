@@ -16,8 +16,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -45,16 +48,16 @@ internal class ReceiverAppearance(context:Context) {
 }
 internal object ReceiverTokens {
     val gap=8.dp
-    val page=16.dp
+    val page=20.dp
     val touch=48.dp
-    val panel=RoundedCornerShape(24.dp)
-    val control=RoundedCornerShape(16.dp)
-    val light=lightColorScheme(background=Color(0xFFEEF2F7),surface=Color(0xFFFAFCFF),
-        onBackground=Color(0xFF172434),onSurface=Color(0xFF172434),onSurfaceVariant=Color(0xFF526174),
-        primary=Color(0xFF2457C5),onPrimary=Color.White,primaryContainer=Color(0xFFDCE8FF),
+    val panel=RoundedCornerShape(28.dp)
+    val control=RoundedCornerShape(20.dp)
+    val light=lightColorScheme(background=Color(0xFFDCEBFA),surface=Color(0xFFF3F8FF),
+        onBackground=Color(0xFF172434),onSurface=Color(0xFF172434),onSurfaceVariant=Color(0xFF4B596C),
+        primary=Color(0xFF0060C9),onPrimary=Color.White,primaryContainer=Color(0xFFDCE8FF),
         onPrimaryContainer=Color(0xFF183F87),outline=Color(0xFF748398),outlineVariant=Color(0xFFCAD4E2))
-    val dark=darkColorScheme(background=Color(0xFF151D29),surface=Color(0xFF202B3A),
-        onBackground=Color(0xFFEDF3FC),onSurface=Color(0xFFEDF3FC),onSurfaceVariant=Color(0xFFAAB8CC),
+    val dark=darkColorScheme(background=Color(0xFF111F33),surface=Color(0xFF202B3A),
+        onBackground=Color(0xFFEDF3FC),onSurface=Color(0xFFEDF3FC),onSurfaceVariant=Color(0xFFB8C6DA),
         primary=Color(0xFF9FBEFF),onPrimary=Color(0xFF122A57),primaryContainer=Color(0xFF344C73),
         onPrimaryContainer=Color(0xFFE0EAFF),outline=Color(0xFF8394AC),outlineVariant=Color(0xFF43536A))
 }
@@ -78,14 +81,19 @@ private val LocalBackdrop=compositionLocalOf { Backdrop() }
 }
 private fun DrawScope.drawScene(size:IntSize,dark:Boolean) {
     val w=size.width.toFloat().coerceAtLeast(1f);val h=size.height.toFloat().coerceAtLeast(1f)
-    drawRect(Brush.linearGradient(if(dark) listOf(Color(0xFF25354D),Color(0xFF151D29),Color(0xFF202C41))
-        else listOf(Color(0xFFE3ECFA),Color(0xFFFAFCFF),Color(0xFFEAF0FA)),end=Offset(w,h)),size=androidx.compose.ui.geometry.Size(w,h))
+    drawRect(Brush.linearGradient(if(dark) listOf(Color(0xFF172B46),Color(0xFF0F1D30),Color(0xFF244E72))
+        else listOf(Color(0xFFD9ECFC),Color(0xFFBBDCF6),Color(0xFFE8F4FF)),end=Offset(w,h)),size=androidx.compose.ui.geometry.Size(w,h))
+    drawCircle(Brush.radialGradient(listOf(Color(0xFF69BAFF).copy(alpha=if(dark) .25f else .40f),Color.Transparent),
+        center=Offset(w*.88f,h*.18f),radius=w*.64f),radius=w*.64f,center=Offset(w*.88f,h*.18f))
+    val ribbon=Path().apply {moveTo(-w*.1f,h*.58f);cubicTo(w*.3f,h*.42f,w*.58f,h*1.2f,w*1.1f,h*.58f);lineTo(w*1.1f,h*1.1f);lineTo(-w*.1f,h*1.1f);close()}
+    drawPath(ribbon,Brush.linearGradient(listOf(Color.White.copy(alpha=if(dark) .035f else .36f),Color(0xFF64B8ED).copy(alpha=.14f)),end=Offset(w,h)))
+    drawPath(ribbon,Color.White.copy(alpha=if(dark) .10f else .62f),style=Stroke(1.3f))
 }
 @Composable internal fun ReceiverScene(modifier:Modifier=Modifier,content:@Composable BoxScope.()->Unit) {
     var scene by remember { mutableStateOf(Backdrop()) }
     val dark=LocalReceiverDark.current
     Box(modifier.onGloballyPositioned { scene=Backdrop(it.size,it.positionInRoot()) }) {
-        Canvas(Modifier.matchParentSize()) { drawScene(scene.size,dark) }
+        Canvas(Modifier.matchParentSize().clipToBounds()) { drawScene(scene.size,dark) }
         CompositionLocalProvider(LocalBackdrop provides scene) { content() }
     }
 }
@@ -96,16 +104,16 @@ private fun DrawScope.drawScene(size:IntSize,dark:Boolean) {
     var offset by remember { mutableStateOf(Offset.Zero) }
     val shape=ReceiverTokens.panel
     val tint=MaterialTheme.colorScheme.surface
-    val highlight=if(dark) Color.White.copy(alpha=.16f) else Color.White.copy(alpha=.9f)
-    Box(modifier.shadow(2.dp,shape).clip(shape)
+    val highlight=if(dark) Color.White.copy(alpha=.22f) else Color.White.copy(alpha=.86f)
+    Box(modifier.shadow(8.dp,shape,ambientColor=Color(0xFF12508F).copy(alpha=.18f),spotColor=Color(0xFF12508F).copy(alpha=.18f)).clip(shape)
         .onGloballyPositioned { offset=it.positionInRoot()-scene.origin }
         .border(1.dp,highlight,shape)) {
-        if(Build.VERSION.SDK_INT>=31) {
-            Canvas(Modifier.matchParentSize().blur(16.dp)) {
+        run {
+            Canvas(if(Build.VERSION.SDK_INT>=31) Modifier.matchParentSize().blur(18.dp) else Modifier.matchParentSize()) {
                 translate(-offset.x,-offset.y) { drawScene(scene.size,dark) }
             }
         }
-        Box(Modifier.matchParentSize().background(tint.copy(alpha=if(Build.VERSION.SDK_INT<31) .98f else .92f)))
+        Box(Modifier.matchParentSize().background(tint.copy(alpha=if(dark) .74f else .48f)))
         content()
     }
 }

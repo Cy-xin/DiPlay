@@ -23,6 +23,14 @@ import androidx.compose.ui.text.input.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.launch
 
 internal enum class ReceiverDialog { AUDIO, FPS, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
@@ -91,10 +99,18 @@ internal class ReceiverUiState {
                 }
             } else {
                 ReceiverScene(Modifier.fillMaxSize()) {
-                    ConnectionPage(ui,onMode,onPrimary,onLogs)
-                    if(ui.settingsOpen) SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
-                        ui.audit("theme_selected","mode=$mode")
-                    scope.launch { try { appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode") } catch(_:java.io.IOException) { themeError=true;ui.audit("theme_save_failed","") } }
+                    Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal=ReceiverTokens.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            when {
+                                ui.dialog in listOf(ReceiverDialog.DIAGNOSTICS,ReceiverDialog.PAIR_UPLOAD,ReceiverDialog.LOGS) -> DiagnosticPage(ui,onUpload,onLogs)
+                                ui.settingsOpen -> SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
+                                    ui.audit("theme_selected","mode=$mode")
+                                    scope.launch { try { appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode") } catch(_:java.io.IOException) { themeError=true;ui.audit("theme_save_failed","") } }
+                                }
+                                else -> ConnectionPage(ui,onMode,onPrimary,onLogs)
+                            }
+                        }
+                        GlassNavigation(ui,onLogs)
                     }
                 }
             }
@@ -104,64 +120,109 @@ internal class ReceiverUiState {
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
 }
 
-@Composable private fun ConnectionPage(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onLogs:()->Unit) {
-    BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding()) {
-        val wide=ReceiverLayoutPolicy.twoColumns(maxWidth.value,LocalDensity.current.fontScale)
-        val horizontalFooter=wide || maxWidth>=600.dp
-        val short=maxHeight/LocalDensity.current.fontScale<340.dp
-        val padding=if(short) 8.dp else if(maxWidth<600.dp) 16.dp else ReceiverTokens.page
-        Column(Modifier.fillMaxSize().padding(padding),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 12.dp)) {
-            GlassSurface(Modifier.fillMaxWidth()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                    Text("DiPlay Geely",Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold,
-                        color=MaterialTheme.colorScheme.onSurface,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    TextButton({ ui.audit("settings_open","");ui.notice="";ui.settingsOpen=true },Modifier.heightIn(min=48.dp)) { Text(tr("设置","Settings"),fontSize=16.sp) }
+@Composable private fun GlassIcon(kind:Int,modifier:Modifier=Modifier) {
+    val ink=LocalContentColor.current
+    Canvas(modifier.size(22.dp)) {
+        val scale=size.minDimension/24f
+        val stroke=Stroke(1.8f*scale,cap=androidx.compose.ui.graphics.StrokeCap.Round,join=androidx.compose.ui.graphics.StrokeJoin.Round)
+        val path=Path()
+        fun line(vararg points:Float) {path.moveTo(points[0]*scale,points[1]*scale);for(i in 2 until points.size step 2) path.lineTo(points[i]*scale,points[i+1]*scale)}
+        when(kind) {
+            0 -> {line(3f,11f,7f,15f,11f,11f);line(13f,13f,17f,9f,21f,13f);line(7f,15f,14f,8f);line(10f,16f,17f,9f)}
+            1 -> {drawCircle(ink,radius=8f*scale,center=center,style=stroke);drawCircle(ink,radius=3f*scale,center=center,style=stroke);for(i in 0..3) {val x=if(i%2==0) 12f else if(i==1) 2f else 22f;val y=if(i%2==1) 12f else if(i==0) 2f else 22f;drawCircle(ink,radius=1.4f*scale,center=Offset(x*scale,y*scale))}}
+            2 -> line(2f,12f,6f,12f,9f,4f,13f,20f,16f,10f,19f,12f,22f,12f)
+            3 -> {line(3f,9f,8f,5f,16f,5f,21f,9f);line(6f,12f,9f,9f,15f,9f,18f,12f);line(10f,15f,12f,13f,14f,15f);drawCircle(ink,radius=1.2f*scale,center=Offset(12f*scale,18f*scale))}
+            else -> {line(12f,4f,12f,10f);line(5f,14f,5f,10f,19f,10f,19f,14f);drawRect(ink,Offset(2f*scale,14f*scale),androidx.compose.ui.geometry.Size(6f*scale,5f*scale),style=stroke);drawRect(ink,Offset(16f*scale,14f*scale),androidx.compose.ui.geometry.Size(6f*scale,5f*scale),style=stroke)}
+        }
+        drawPath(path,ink,style=stroke)
+    }
+}
+@Composable private fun GlassNavigation(ui:ReceiverUiState,onLogs:()->Unit) {
+    val diagnostic=ui.dialog in listOf(ReceiverDialog.DIAGNOSTICS,ReceiverDialog.PAIR_UPLOAD,ReceiverDialog.LOGS)
+    val selected=if(diagnostic) 2 else if(ui.settingsOpen) 1 else 0
+    Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.Center) {
+        GlassSurface(Modifier.widthIn(max=600.dp).fillMaxWidth()) {
+            Row(Modifier.padding(5.dp).selectableGroup(),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                listOf(tr("连接","Connect"),tr("设置","Settings"),tr("诊断","Diagnostics")).forEachIndexed {i,label ->
+                    val active=i==selected
+                    val color=if(active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    Surface(onClick={ui.audit("navigation_selected","tab=$i");ui.settingsOpen=i==1;ui.dialog=null;if(i==2) onLogs()},
+                        modifier=Modifier.weight(1f).semantics {role=Role.Tab;this.selected=active},shape=CircleShape,
+                        color=if(active) MaterialTheme.colorScheme.surface.copy(alpha=.68f) else Color.Transparent) {
+                        Row(Modifier.heightIn(min=48.dp).padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
+                            CompositionLocalProvider(LocalContentColor provides color) {GlassIcon(i);Spacer(Modifier.width(8.dp));Text(label,fontSize=14.sp,fontWeight=if(active) FontWeight.SemiBold else FontWeight.Normal)}
+                        }
+                    }
                 }
             }
-            if(wide) {
-                Row(Modifier.weight(1f).fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
-                    Column(Modifier.width(208.dp).verticalScroll(rememberScrollState())) { ModeChoices(ui,onMode,false) }
-                    ConnectionForm(ui,Modifier.weight(1f).fillMaxHeight())
-                }
-            } else {
-                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
-                    ModeChoices(ui,onMode,true)
-                    ConnectionFields(ui)
+        }
+    }
+}
+@Composable private fun PageHeading(title:String,subtitle:String?=null,aside:@Composable ()->Unit={}) {
+    Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title,fontSize=24.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface)
+            if(subtitle!=null) Text(subtitle,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        aside()
+    }
+}
+@Composable private fun ConnectionPage(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onLogs:()->Unit) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide=ReceiverLayoutPolicy.twoColumns(maxWidth.value,LocalDensity.current.fontScale)
+        val short=maxHeight/LocalDensity.current.fontScale<420.dp
+        val horizontalModes=wide || maxWidth>=360.dp
+        val horizontalFooter=wide || maxWidth>=600.dp
+        Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Text("DiPlay Geely",Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
+                GlassSurface {Text(if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
+            }
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 16.dp)) {
+                if(!short) Text(tr("连接，让旅途更轻松","Connect. Enjoy the journey."),fontSize=30.sp,fontWeight=FontWeight.Bold)
+                ModeChoices(ui,onMode,horizontalModes)
+                GlassSurface(Modifier.fillMaxWidth()) {
+                    if(wide) Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+                        Column(Modifier.width(220.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {ConfigurationHeading(ui)}
+                        Column(Modifier.weight(1f)) {ConnectionFields(ui,true)}
+                    } else Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {ConfigurationHeading(ui);ConnectionFields(ui)}
                 }
             }
             ConnectionFooter(ui,horizontalFooter,onPrimary,onLogs)
         }
     }
 }
+@Composable private fun ConfigurationHeading(ui:ReceiverUiState) {
+    Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("热点配置","Hotspot setup") else tr("局域网配置","Wi-Fi setup"),fontSize=18.sp,fontWeight=FontWeight.SemiBold)
+    Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("开启车机热点，让 iPhone 加入同一网络，并完成蓝牙配对。","Turn on the car hotspot, join it on iPhone, and pair Bluetooth.")
+        else tr("两台设备加入同一 Wi-Fi 并配对蓝牙。网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+}
 @Composable private fun ModeChoices(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,horizontal:Boolean) {
     @Composable fun choice(mode:ConnectionMode,modifier:Modifier) {
         val selected=ui.mode==mode
         val haptic=LocalHapticFeedback.current
-        Surface(onClick={ haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onMode(mode) },enabled=ui.editable,
-            modifier=modifier.heightIn(min=56.dp).semantics { role=Role.RadioButton;this.selected=selected },
-            shape=ReceiverTokens.control,color=if(selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent) {
-            Row(Modifier.padding(horizontal=4.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
-                RadioButton(selected,null,enabled=ui.editable)
-                Text(if(mode==ConnectionMode.CAR_HOTSPOT) tr("车机热点","Car hotspot") else tr("同一局域网","Same Wi-Fi"),
-                    Modifier.padding(end=8.dp),fontSize=16.sp,fontWeight=if(selected) FontWeight.SemiBold else FontWeight.Normal)
+        GlassSurface(modifier) {
+            val fill=if(selected) Modifier.background(Brush.linearGradient(listOf(Color(0xFF0871D5),Color(0xFF0065DE)))) else Modifier
+            Row(Modifier.fillMaxWidth().then(fill).heightIn(min=56.dp).clickable(enabled=ui.editable) {haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onMode(mode)}
+                .semantics {role=Role.RadioButton;this.selected=selected}.padding(horizontal=16.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                CompositionLocalProvider(LocalContentColor provides if(selected) Color.White else MaterialTheme.colorScheme.onSurface) {
+                    GlassIcon(if(mode==ConnectionMode.CAR_HOTSPOT) 3 else 4)
+                    Text(if(mode==ConnectionMode.CAR_HOTSPOT) tr("车机热点","Car hotspot") else tr("同一局域网","Same Wi-Fi"),Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
+                    if(selected) Text("✓",fontSize=18.sp)
+                }
             }
         }
     }
-    if(horizontal) Row(Modifier.fillMaxWidth().selectableGroup(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+    if(horizontal) Row(Modifier.fillMaxWidth().selectableGroup(),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
         choice(ConnectionMode.CAR_HOTSPOT,Modifier.weight(1f));choice(ConnectionMode.SAME_LAN,Modifier.weight(1f))
     } else Column(Modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
         choice(ConnectionMode.CAR_HOTSPOT,Modifier.fillMaxWidth());choice(ConnectionMode.SAME_LAN,Modifier.fillMaxWidth())
     }
 }
-@Composable private fun ConnectionForm(ui:ReceiverUiState,modifier:Modifier) {
-    Column(modifier.verticalScroll(rememberScrollState())) { ConnectionFields(ui,true) }
-}
 @Composable private fun ConnectionFields(ui:ReceiverUiState,inline:Boolean=false) {
     var reveal by rememberSaveable { mutableStateOf(false) }
+    var advanced by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
-        Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("开启原车热点，让 iPhone 加入并完成蓝牙配对。","Turn on the car hotspot. Join it on iPhone and pair Bluetooth.")
-            else tr("两台设备加入同一 Wi-Fi 并配对蓝牙；网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),
-            color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp)
         @Composable fun name(modifier:Modifier) {
             OutlinedTextField(ui.ssid,{ ui.audit("field_edited","field=network_name");ui.ssid=it },modifier,enabled=ui.editable,
                 textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
@@ -180,7 +241,12 @@ internal class ReceiverUiState {
         if(inline) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.Top) {
             name(Modifier.weight(1f));password(Modifier.weight(1f))
         } else { name(Modifier.fillMaxWidth());password(Modifier.fillMaxWidth()) }
-        TextButton({ui.audit("settings_open","");ui.notice="";ui.settingsOpen=true},Modifier.heightIn(min=56.dp)) {Text(tr("连接与播放设置","Connection & playback settings"),fontSize=14.sp)}
+        TextButton({advanced=!advanced;ui.audit("connection_advanced","expanded=$advanced")},Modifier.heightIn(min=48.dp)) {Text(tr("高级选项","Advanced options")+if(advanced) "  −" else "  +",fontSize=14.sp)}
+        if(advanced) {
+            if(ui.mode==ConnectionMode.CAR_HOTSPOT) OutlinedTextField(ui.networkInterface,{ui.audit("field_edited","field=network_interface");ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
+                label={Text(tr("热点网络接口","Hotspot network interface"))},singleLine=true,shape=ReceiverTokens.control)
+            Text(tr("已配对 iPhone 可在设置中选择。","Choose a paired iPhone in Settings."),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 @Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit) {
@@ -195,43 +261,50 @@ internal class ReceiverUiState {
     }
     @Composable fun action(modifier:Modifier) {
         Button({ ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary() },
-            modifier.heightIn(min=56.dp),enabled=!ui.stopping,shape=ReceiverTokens.control) {
+            modifier.heightIn(min=56.dp),enabled=!ui.stopping,shape=CircleShape) {
             Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
         }
     }
-    GlassSurface(Modifier.fillMaxWidth()) {
-        if(wide) Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+    Box(Modifier.fillMaxWidth()) {
+        if(wide) Row(Modifier.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(24.dp)) {
             status(Modifier.weight(1f))
             if(!ui.busy && ui.message!="未连接。请先连接网络并配对蓝牙。") TextButton(onLogs,Modifier.heightIn(min=48.dp)) {Text(tr("详情","Details"))}
-            action(Modifier.width(224.dp))
-        } else Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())}
+            action(Modifier.width(300.dp))
+        } else Column(Modifier.padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())}
     }
 }
 @Composable private fun SettingsPanel(ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,onFullscreen:(Boolean)->Unit,onTheme:(ReceiverThemeMode)->Unit) {
     var query by rememberSaveable {mutableStateOf("")}
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.24f)).safeDrawingPadding().imePadding()) {
+    var settingsGroup by rememberSaveable {mutableIntStateOf(1)}
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide=maxWidth>=840.dp
-        GlassSurface(Modifier.align(Alignment.CenterEnd).padding(if(wide) 16.dp else 8.dp)
-            .widthIn(max=if(wide) 540.dp else maxWidth).fillMaxHeight()) {
+        GlassSurface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
-                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold)
+                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=24.sp,fontWeight=FontWeight.Bold)
+                    if(wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.width(300.dp),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
                     TextButton({ui.audit("settings_close","");ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
                 }
-                OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
+                if(!wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
                     Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    fun matches(vararg words:String)=query.isBlank() || words.any {it.contains(query,true)}
+                Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
+                    val groups=listOf(tr("连接","Connection"),tr("音频与画面","Audio & display"),tr("外观","Appearance"))
+                    if(wide && query.isBlank()) Column(Modifier.width(180.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        groups.forEachIndexed {index,label ->
+                            Surface(onClick={settingsGroup=index;ui.audit("settings_group","index=$index")},shape=ReceiverTokens.control,
+                                color=if(index==settingsGroup) MaterialTheme.colorScheme.primaryContainer.copy(alpha=.75f) else Color.Transparent) {
+                                Text(label,Modifier.fillMaxWidth().padding(16.dp),fontSize=15.sp,fontWeight=FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    fun matches(vararg words:String)=if(query.isNotBlank()) words.any {it.contains(query,true)} else !wide || words.firstOrNull()==groups[settingsGroup]
                     @Composable fun section(title:String) { Text(title,Modifier.padding(top=16.dp,bottom=4.dp),fontSize=14.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary) }
-                    val connection=tr("连接","Connection");val playback=tr("播放","Playback");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
+                    val connection=tr("连接","Connection");val playback=tr("音频与画面","Audio & display");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
                     var found=false
                     if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
                     if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
-                    if(ui.mode==ConnectionMode.CAR_HOTSPOT && matches(connection,"接口","interface")) {
-                        found=true;OutlinedTextField(ui.networkInterface,{ui.audit("field_edited","field=network_interface");ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
-                            label={Text(tr("热点网络接口","Hotspot network interface"))},singleLine=true,shape=ReceiverTokens.control)
-                    }
                     if(matches(playback,"音频","缓冲","audio","buffer")) {
                         found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
                     }
@@ -259,8 +332,9 @@ internal class ReceiverUiState {
                                 modifier=Modifier.semantics {contentDescription="隐藏状态栏和侧边栏 / Hide system bars"})
                         }
                     }
-                    if(matches(diagnostics,"日志","记录","log","上传","upload","服务器","server")) {found=true;section(diagnostics);SettingsRow(tr("日志与上传","Logs & upload"),tr("全程操作记录、问题说明与诊断编号","Operation history, issue notes and report ID"),true,onLogs)}
+
                     if(!found) Text(tr("未找到设置，请换个关键词。","No settings found. Try another keyword."),Modifier.padding(16.dp))
+                    }
                 }
             }
         }
@@ -274,12 +348,12 @@ internal class ReceiverUiState {
         }
     }
 }
-@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
-    val dialog=ui.dialog ?: return
-    if(dialog==ReceiverDialog.DIAGNOSTICS) {
-        val clipboard=LocalClipboardManager.current
-        AlertDialog(onDismissRequest={ui.audit("diagnostics_close","");ui.dialog=null},title={Text(tr("日志与上传","Logs & upload"))},text={
-            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+@Composable private fun DiagnosticPage(ui:ReceiverUiState,onUpload:(Boolean)->Unit,onLogs:()->Unit) {
+    val clipboard=LocalClipboardManager.current
+    Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+        PageHeading(tr("诊断","Diagnostics"),tr("记录问题，方便下次排查","Record an issue for troubleshooting"))
+        GlassSurface(Modifier.fillMaxWidth().weight(1f)) {
+            Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(tr("持续记录本应用操作与连接诊断，保留最近7天、最多约8MB；不含密码、密钥、输入内容、录音或画面。只在你点击后上传。",
                     "App operations and connection diagnostics: up to 7 days / about 8MiB. No credentials, input content, recordings or frames. Upload only when requested."),fontSize=14.sp)
                 OutlinedTextField(ui.issue,{ui.audit("issue_note_edited","");ui.issue=it.take(1000)},Modifier.fillMaxWidth(),label={Text(tr("问题说明（可选）","Issue notes (optional)"))},enabled=!ui.uploadBusy,minLines=2,maxLines=3)
@@ -294,12 +368,16 @@ internal class ReceiverUiState {
                 TextButton({ui.audit("local_log_preview","");ui.refreshLocalLog();ui.dialog=ReceiverDialog.LOGS}) {Text(tr("查看本地记录","View local log"))}
                 if(ui.uploadPaired) TextButton({ui.dialog=ReceiverDialog.PAIR_UPLOAD},enabled=!ui.uploadBusy) {Text(tr("重新配对日志服务器","Pair log server again"))}
             }
-        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("关闭","Close"))}})
-        return
+        }
     }
+}
+
+@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
+    val dialog=ui.dialog ?: return
+    if(dialog==ReceiverDialog.DIAGNOSTICS) return
     if(dialog==ReceiverDialog.PAIR_UPLOAD) {
         var code by remember {mutableStateOf("")}
-        AlertDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("连接日志服务器","Connect log server"))},text={
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("连接日志服务器","Connect log server"))},text={
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(tr("输入服务器生成的一次性配对码。以后上传无需再填写；配对凭据仅允许上传，不能查询服务器日志。",
                     "Enter the server's one-time pairing code. Future uploads need no code. This credential permits upload only, not report retrieval."),fontSize=14.sp)
@@ -310,13 +388,13 @@ internal class ReceiverUiState {
         return
     }
     if(dialog==ReceiverDialog.LOGS) {
-        AlertDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
             text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
         return
     }
     val title=when(dialog) { ReceiverDialog.AUDIO->tr("音频缓冲","Audio buffer");ReceiverDialog.FPS->tr("CarPlay 帧率","CarPlay frame rate");else->tr("已配对 iPhone","Paired iPhone") }
-    AlertDialog(onDismissRequest={ui.dialog=null},title={Text(title)},text={
+    ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(title)},text={
         Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
             if(dialog!=ReceiverDialog.PHONE) Text(if(dialog==ReceiverDialog.AUDIO)
                 tr("下次连接生效。较低缓冲响应更快，但更易断音；这不是整条链路的总延迟。","Applies next connection. Lower buffering can respond faster but may stutter; this is not total link latency.")
@@ -340,4 +418,18 @@ internal class ReceiverUiState {
 
 internal object ReceiverLayoutPolicy {
     fun twoColumns(widthDp:Float,fontScale:Float)=widthDp/fontScale.coerceAtLeast(1f)>=720f
+}
+
+@Composable private fun ReceiverGlassDialog(onDismissRequest:()->Unit,title:@Composable ()->Unit,text:@Composable ()->Unit,confirmButton:@Composable ()->Unit,dismissButton:(@Composable ()->Unit)?=null) {
+    Dialog(onDismissRequest,properties=DialogProperties(usePlatformDefaultWidth=false)) {
+        ReceiverScene(Modifier.widthIn(max=560.dp).fillMaxWidth().padding(16.dp).clip(ReceiverTokens.panel)) {
+            GlassSurface(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                    ProvideTextStyle(MaterialTheme.typography.titleLarge) {title()}
+                    Box(Modifier.weight(1f,fill=false)) {text()}
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End,verticalAlignment=Alignment.CenterVertically) {dismissButton?.invoke();confirmButton()}
+                }
+            }
+        }
+    }
 }
