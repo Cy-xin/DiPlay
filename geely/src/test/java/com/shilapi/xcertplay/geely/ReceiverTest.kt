@@ -24,12 +24,16 @@ class ReceiverTest {
         val activity=lifecycle.get()
         val store=field(activity,"store") as ReceiverStore
         assertFalse(activity.ui.hideSystemBars)
+        assertEquals(android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS,activity.window.attributes.layoutInDisplayCutoutMode)
+        assertFalse(activity.window.isStatusBarContrastEnforced)
+        assertFalse(activity.window.isNavigationBarContrastEnforced)
         store.prefs.edit().putBoolean("hide_system_bars",true).commit();activity.ui.hideSystemBars=true
         activity.onWindowFocusChanged(true)
         val mask=android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         assertEquals(mask,activity.window.decorView.systemUiVisibility and mask)
         lifecycle.pause().stop()
         assertEquals(0,activity.window.decorView.systemUiVisibility and mask)
+        assertEquals(android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS,activity.window.attributes.layoutInDisplayCutoutMode)
         lifecycle.destroy()
         val reopened=Robolectric.buildActivity(GeelyActivity::class.java).setup()
         assertTrue(reopened.get().ui.hideSystemBars)

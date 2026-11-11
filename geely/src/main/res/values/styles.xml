@@ -1,6 +1,8 @@
 <resources>
 <style name="GeelyTheme" parent="android:style/Theme.Material.Light.NoActionBar">
 <item name="android:fontFamily">sans</item><item name="android:colorAccent">#2457C5</item>
+<item name="android:windowLayoutInDisplayCutoutMode">always</item>
+<item name="android:enforceStatusBarContrast">false</item><item name="android:enforceNavigationBarContrast">false</item>
 <item name="android:windowActionModeOverlay">true</item><item name="android:windowLightStatusBar">true</item>
 <item name="android:windowBackground">#EEF2F7</item><item name="android:statusBarColor">#EEF2F7</item>
 <item name="android:navigationBarColor">#EEF2F7</item><item name="android:windowSoftInputMode">adjustResize</item>
