@@ -18,6 +18,25 @@ import java.util.concurrent.TimeUnit
 class ReceiverTest {
     private fun field(activity:GeelyActivity, name:String):Any? = GeelyActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.get(activity)
     private fun invoke(activity:GeelyActivity,name:String) = GeelyActivity::class.java.getDeclaredMethod(name).apply { isAccessible=true }.invoke(activity)
+    @Suppress("DEPRECATION")
+    @Test fun immersiveFlagsRestoreOnExitAndSavedChoiceReturnsOnReopen() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        val activity=lifecycle.get()
+        val store=field(activity,"store") as ReceiverStore
+        assertFalse(activity.ui.hideSystemBars)
+        store.prefs.edit().putBoolean("hide_system_bars",true).commit();activity.ui.hideSystemBars=true
+        activity.onWindowFocusChanged(true)
+        val mask=android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        assertEquals(mask,activity.window.decorView.systemUiVisibility and mask)
+        lifecycle.pause().stop()
+        assertEquals(0,activity.window.decorView.systemUiVisibility and mask)
+        lifecycle.destroy()
+        val reopened=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        assertTrue(reopened.get().ui.hideSystemBars)
+        assertEquals(mask,reopened.get().window.decorView.systemUiVisibility and mask)
+        reopened.pause().stop().destroy()
+    }
+
     @Test fun hostWindowControlsOrientationInsteadOfForcingLandscape() {
         val app=org.robolectric.RuntimeEnvironment.getApplication()
         val info=app.packageManager.getActivityInfo(android.content.ComponentName(app,GeelyActivity::class.java),0)

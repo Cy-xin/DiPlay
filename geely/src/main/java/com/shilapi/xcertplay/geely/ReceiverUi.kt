@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 internal enum class ReceiverDialog { AUDIO, FPS, PHONE, LOGS }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
+    var hideSystemBars by mutableStateOf(false)
     var attempted by mutableStateOf(false)
     var ssid by mutableStateOf("")
     var password by mutableStateOf("")
@@ -57,7 +58,7 @@ internal class ReceiverUiState {
 @Composable internal fun ReceiverApp(
     ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
-    onPlayback:(Boolean,Int)->Unit,onLogs:()->Unit,
+    onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onLogs:()->Unit,
 ) {
     val context=LocalContext.current
     val appearance=remember { ReceiverAppearance(context) }
@@ -83,7 +84,7 @@ internal class ReceiverUiState {
             } else {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     ConnectionPage(ui,onMode,onPrimary,onLogs)
-                    if(ui.settingsOpen) SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs) { mode ->
+                    if(ui.settingsOpen) SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
                         scope.launch { try { appearance.save(mode);themeError=false } catch(_:java.io.IOException) { themeError=true } }
                     }
                 }
@@ -197,7 +198,7 @@ internal class ReceiverUiState {
         } else Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())}
     }
 }
-@Composable private fun SettingsPanel(ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,onTheme:(ReceiverThemeMode)->Unit) {
+@Composable private fun SettingsPanel(ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,onFullscreen:(Boolean)->Unit,onTheme:(ReceiverThemeMode)->Unit) {
     var query by rememberSaveable {mutableStateOf("")}
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.24f)).safeDrawingPadding().imePadding()) {
         val wide=maxWidth>=840.dp
@@ -235,6 +236,19 @@ internal class ReceiverUiState {
                             }
                         }
                         if(themeError) Text(tr("外观保存失败，请重试。","Could not save appearance. Try again."),color=MaterialTheme.colorScheme.error)
+                    }
+                    if(matches(appearance,"全屏","状态栏","侧边栏","导航栏","fullscreen","system bars","sidebar")) {
+                        found=true
+                        Row(Modifier.fillMaxWidth().heightIn(min=56.dp),verticalAlignment=Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f).padding(end=12.dp)) {
+                                Text(tr("隐藏状态栏和侧边栏","Hide status and navigation bars"),fontSize=16.sp)
+                                Text(tr("仅在本应用内生效。车机侧栏是否支持取决于系统；边缘滑动可临时呼出。连接中不可修改。",
+                                    "Applies in this app only. OEM sidebars may remain. Swipe from an edge to reveal bars. Change while disconnected."),
+                                    fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(ui.hideSystemBars,onCheckedChange=onFullscreen,enabled=ui.editable,
+                                modifier=Modifier.semantics {contentDescription="隐藏状态栏和侧边栏 / Hide system bars"})
+                        }
                     }
                     if(matches(diagnostics,"日志","记录","log")) {found=true;section(diagnostics);SettingsRow(tr("本地连接记录","Local connection log"),tr("用于查看失败阶段与音视频诊断","Connection stages and media diagnostics"),true,onLogs)}
                     if(!found) Text(tr("未找到设置，请换个关键词。","No settings found. Try another keyword."),Modifier.padding(16.dp))

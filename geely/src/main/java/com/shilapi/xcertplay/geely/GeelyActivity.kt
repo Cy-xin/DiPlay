@@ -114,11 +114,18 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                             refreshPlaybackLabels()
                         }
                     },
+                    onFullscreen={ hidden ->
+                        if(ui.editable) {
+                            ui.hideSystemBars=hidden
+                            store.prefs.edit().putBoolean("hide_system_bars",hidden).apply()
+                            ReceiverSystemBars.apply(this@GeelyActivity,hidden)
+                        }
+                    },
                     onLogs={ loadLogs() })
             }
         }
         root.addView(compose,FrameLayout.LayoutParams(-1,-1));setContentView(root)
-        loadInputs();refreshPlaybackLabels();applyState()
+        loadInputs();refreshPlaybackLabels();ui.hideSystemBars=store.prefs.getBoolean("hide_system_bars",false);applyState()
     }
     internal fun switchMode(next:ConnectionMode) {
         if(busy || stopping || next==mode) return
@@ -297,8 +304,12 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             }
         }
     }
-    override fun onStart() { super.onStart();foreground=true }
-    override fun onStop() { saveInputs();foreground=false;if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
+    override fun onStart() { super.onStart();foreground=true;ReceiverSystemBars.apply(this,ui.hideSystemBars) }
+    override fun onWindowFocusChanged(hasFocus:Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
+    }
+    override fun onStop() { saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
