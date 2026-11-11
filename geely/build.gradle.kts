@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 107
-        versionName = "0.2.2-geely-compose"
+        versionCode = 108
+        versionName = "0.3.0-geely-diagnostics"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {
@@ -25,7 +25,7 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_11; targetCompatibility = JavaVersion.VERSION_11 }
     // Private Android 11 receiver; Google Play publication is outside this build.
     lint { disable += "ExpiredTargetSdkVersion" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }
 dependencies {

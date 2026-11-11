@@ -25,9 +25,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-internal enum class ReceiverDialog { AUDIO, FPS, PHONE, LOGS }
+internal enum class ReceiverDialog { AUDIO, FPS, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
+    var audit:(String,String)->Unit={_,_->}
+    var refreshLocalLog:()->Unit={}
+    var uploadPaired by mutableStateOf(false)
+    var uploadBusy by mutableStateOf(false)
+    var pendingUpload by mutableStateOf(false)
+    var uploadMessage by mutableStateOf("")
+    var issue by mutableStateOf("")
+    var lastReport by mutableStateOf("")
     var hideSystemBars by mutableStateOf(false)
     var attempted by mutableStateOf(false)
     var ssid by mutableStateOf("")
@@ -47,8 +55,8 @@ internal class ReceiverUiState {
     var notice by mutableStateOf("")
     val editable get()=!busy && !stopping && !connected
     fun dismissTopLayer():Boolean {
-        if(dialog!=null) { dialog=null;return true }
-        if(settingsOpen) { settingsOpen=false;return true }
+        if(dialog!=null) { audit("dialog_back","dialog=$dialog");dialog=if(dialog==ReceiverDialog.LOGS || dialog==ReceiverDialog.PAIR_UPLOAD) ReceiverDialog.DIAGNOSTICS else null;return true }
+        if(settingsOpen) {audit("settings_back","");settingsOpen=false;return true }
         return false
     }
 }
@@ -58,7 +66,7 @@ internal class ReceiverUiState {
 @Composable internal fun ReceiverApp(
     ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
-    onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onLogs:()->Unit,
+    onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
 ) {
     val context=LocalContext.current
     val appearance=remember { ReceiverAppearance(context) }
@@ -85,11 +93,12 @@ internal class ReceiverUiState {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     ConnectionPage(ui,onMode,onPrimary,onLogs)
                     if(ui.settingsOpen) SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
-                        scope.launch { try { appearance.save(mode);themeError=false } catch(_:java.io.IOException) { themeError=true } }
+                        ui.audit("theme_selected","mode=$mode")
+                    scope.launch { try { appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode") } catch(_:java.io.IOException) { themeError=true;ui.audit("theme_save_failed","") } }
                     }
                 }
             }
-            ReceiverDialogs(ui,onPhoneSelected,onPlayback)
+            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onUpload,onPairUpload)
         }
     }
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
@@ -106,7 +115,7 @@ internal class ReceiverUiState {
                 Row(Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
                     Text("DiPlay Geely",Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold,
                         color=MaterialTheme.colorScheme.onSurface,maxLines=1,overflow=TextOverflow.Ellipsis)
-                    TextButton({ ui.notice="";ui.settingsOpen=true },Modifier.heightIn(min=48.dp)) { Text(tr("设置","Settings"),fontSize=16.sp) }
+                    TextButton({ ui.audit("settings_open","");ui.notice="";ui.settingsOpen=true },Modifier.heightIn(min=48.dp)) { Text(tr("设置","Settings"),fontSize=16.sp) }
                 }
             }
             if(wide) {
@@ -154,24 +163,24 @@ internal class ReceiverUiState {
             else tr("两台设备加入同一 Wi-Fi 并配对蓝牙；网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),
             color=MaterialTheme.colorScheme.onSurfaceVariant,fontSize=14.sp)
         @Composable fun name(modifier:Modifier) {
-            OutlinedTextField(ui.ssid,{ ui.ssid=it },modifier,enabled=ui.editable,
+            OutlinedTextField(ui.ssid,{ ui.audit("field_edited","field=network_name");ui.ssid=it },modifier,enabled=ui.editable,
                 textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
                 isError=ui.attempted && ui.ssid.isBlank(),
                 supportingText=if(ui.attempted && ui.ssid.isBlank()) ({Text(tr("请输入网络名称","Enter the network name"))}) else null,
                 keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Next))
         }
         @Composable fun password(modifier:Modifier) {
-            OutlinedTextField(ui.password,{ui.password=it},modifier,enabled=ui.editable,
+            OutlinedTextField(ui.password,{ui.audit("field_edited","field=network_password");ui.password=it},modifier,enabled=ui.editable,
                 textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络密码","Network password"))},placeholder={Text(tr("开放网络可留空","Leave empty for an open network"))},
                 visualTransformation=if(reveal) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,imeAction=ImeAction.Done),
-                trailingIcon={ TextButton({reveal=!reveal},Modifier.sizeIn(minWidth=56.dp,minHeight=56.dp)) {Text(if(reveal) tr("隐藏","Hide") else tr("显示","Show"))} },
+                trailingIcon={ TextButton({ui.audit("password_visibility","visible=${!reveal}");reveal=!reveal},Modifier.sizeIn(minWidth=56.dp,minHeight=56.dp)) {Text(if(reveal) tr("隐藏","Hide") else tr("显示","Show"))} },
                 singleLine=true,shape=ReceiverTokens.control)
         }
         if(inline) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.Top) {
             name(Modifier.weight(1f));password(Modifier.weight(1f))
         } else { name(Modifier.fillMaxWidth());password(Modifier.fillMaxWidth()) }
-        TextButton({ui.notice="";ui.settingsOpen=true},Modifier.heightIn(min=56.dp)) {Text(tr("连接与播放设置","Connection & playback settings"),fontSize=14.sp)}
+        TextButton({ui.audit("settings_open","");ui.notice="";ui.settingsOpen=true},Modifier.heightIn(min=56.dp)) {Text(tr("连接与播放设置","Connection & playback settings"),fontSize=14.sp)}
     }
 }
 @Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit) {
@@ -207,9 +216,9 @@ internal class ReceiverUiState {
             Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
                     Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=22.sp,fontWeight=FontWeight.SemiBold)
-                    TextButton({ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
+                    TextButton({ui.audit("settings_close","");ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
                 }
-                OutlinedTextField(query,{query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
+                OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
                     Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -220,13 +229,13 @@ internal class ReceiverUiState {
                     if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
                     if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
                     if(ui.mode==ConnectionMode.CAR_HOTSPOT && matches(connection,"接口","interface")) {
-                        found=true;OutlinedTextField(ui.networkInterface,{ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
+                        found=true;OutlinedTextField(ui.networkInterface,{ui.audit("field_edited","field=network_interface");ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
                             label={Text(tr("热点网络接口","Hotspot network interface"))},singleLine=true,shape=ReceiverTokens.control)
                     }
                     if(matches(playback,"音频","缓冲","audio","buffer")) {
-                        found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.dialog=ReceiverDialog.AUDIO}
+                        found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
                     }
-                    if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.dialog=ReceiverDialog.FPS}}
+                    if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
                     if(matches(appearance,"主题","theme","浅色","深色","系统")) {
                         found=true;section(appearance)
                         ReceiverThemeMode.entries.forEach { mode ->
@@ -250,7 +259,7 @@ internal class ReceiverUiState {
                                 modifier=Modifier.semantics {contentDescription="隐藏状态栏和侧边栏 / Hide system bars"})
                         }
                     }
-                    if(matches(diagnostics,"日志","记录","log")) {found=true;section(diagnostics);SettingsRow(tr("本地连接记录","Local connection log"),tr("用于查看失败阶段与音视频诊断","Connection stages and media diagnostics"),true,onLogs)}
+                    if(matches(diagnostics,"日志","记录","log")) {found=true;section(diagnostics);SettingsRow(tr("日志与上传","Logs & upload"),tr("全程操作记录、问题说明与诊断编号","Operation history, issue notes and report ID"),true,onLogs)}
                     if(!found) Text(tr("未找到设置，请换个关键词。","No settings found. Try another keyword."),Modifier.padding(16.dp))
                 }
             }
@@ -265,12 +274,45 @@ internal class ReceiverUiState {
         }
     }
 }
-@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit) {
+@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
     val dialog=ui.dialog ?: return
+    if(dialog==ReceiverDialog.DIAGNOSTICS) {
+        val clipboard=LocalClipboardManager.current
+        AlertDialog(onDismissRequest={ui.audit("diagnostics_close","");ui.dialog=null},title={Text(tr("日志与上传","Logs & upload"))},text={
+            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(tr("持续记录本应用操作与连接诊断，保留最近7天、最多约8MB；不含密码、密钥、输入内容、录音或画面。只在你点击后上传。",
+                    "App operations and connection diagnostics: up to 7 days / about 8MiB. No credentials, input content, recordings or frames. Upload only when requested."),fontSize=14.sp)
+                OutlinedTextField(ui.issue,{ui.audit("issue_note_edited","");ui.issue=it.take(1000)},Modifier.fillMaxWidth(),label={Text(tr("问题说明（可选）","Issue notes (optional)"))},enabled=!ui.uploadBusy,minLines=2,maxLines=3)
+                if(!ui.uploadPaired) OutlinedButton({ui.audit("upload_pair_dialog_open","");ui.dialog=ReceiverDialog.PAIR_UPLOAD},enabled=!ui.uploadBusy) {Text(tr("连接日志服务器（首次）","Connect log server (first use)"))}
+                Button({onUpload(false)},enabled=!ui.uploadBusy) {Text(if(ui.uploadBusy) tr("正在处理…","Working…") else tr("上传诊断日志","Upload diagnostics"))}
+                if(ui.pendingUpload) TextButton({onUpload(true)},enabled=!ui.uploadBusy) {Text(tr("重试上次上传","Retry previous upload"))}
+                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+                if(ui.lastReport.isNotBlank()) {
+                    SelectionContainer {Text(tr("最近诊断编号：","Latest report: ")+ui.lastReport,fontSize=14.sp)}
+                    TextButton({clipboard.setText(androidx.compose.ui.text.AnnotatedString(ui.lastReport));ui.audit("report_id_copied","report=${ui.lastReport}")}) {Text(tr("复制诊断编号","Copy report ID"))}
+                }
+                TextButton({ui.audit("local_log_preview","");ui.refreshLocalLog();ui.dialog=ReceiverDialog.LOGS}) {Text(tr("查看本地记录","View local log"))}
+                if(ui.uploadPaired) TextButton({ui.dialog=ReceiverDialog.PAIR_UPLOAD},enabled=!ui.uploadBusy) {Text(tr("重新配对日志服务器","Pair log server again"))}
+            }
+        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("关闭","Close"))}})
+        return
+    }
+    if(dialog==ReceiverDialog.PAIR_UPLOAD) {
+        var code by remember {mutableStateOf("")}
+        AlertDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("连接日志服务器","Connect log server"))},text={
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(tr("输入服务器生成的一次性配对码。以后上传无需再填写；配对凭据仅允许上传，不能查询服务器日志。",
+                    "Enter the server's one-time pairing code. Future uploads need no code. This credential permits upload only, not report retrieval."),fontSize=14.sp)
+                OutlinedTextField(code,{code=it.take(12)},singleLine=true,label={Text(tr("12位配对码","12-character code"))},visualTransformation=PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Ascii,imeAction=ImeAction.Done),enabled=!ui.uploadBusy)
+                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,fontSize=14.sp)
+            }
+        },confirmButton={TextButton({onPairUpload(code)},enabled=!ui.uploadBusy && code.length==12) {Text(tr("配对","Pair"))}},dismissButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
+        return
+    }
     if(dialog==ReceiverDialog.LOGS) {
-        AlertDialog(onDismissRequest={ui.dialog=null},title={Text(tr("本地连接记录","Local connection log"))},
-            text={SelectionContainer {Text(ui.logs,Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
-            confirmButton={TextButton({ui.dialog=null}) {Text(tr("关闭","Close"))}})
+        AlertDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
+            text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
+            confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
         return
     }
     val title=when(dialog) { ReceiverDialog.AUDIO->tr("音频缓冲","Audio buffer");ReceiverDialog.FPS->tr("CarPlay 帧率","CarPlay frame rate");else->tr("已配对 iPhone","Paired iPhone") }

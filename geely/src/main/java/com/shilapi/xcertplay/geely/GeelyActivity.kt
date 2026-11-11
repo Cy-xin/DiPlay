@@ -29,6 +29,9 @@ import java.util.concurrent.Executors
 class GeelyActivity : androidx.activity.ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
+    private lateinit var journal: ReceiverDiagnostics
+    private lateinit var uploader: ReceiverDiagnosticUpload
+    private val uploadWorker=Executors.newSingleThreadExecutor()
     private lateinit var store: ReceiverStore
     private lateinit var root: FrameLayout
     internal val ui = ReceiverUiState()
@@ -55,11 +58,21 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var message = "未连接。请先按说明连接网络并配对蓝牙。"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        journal=ReceiverDiagnostics.get(this)
+        uploader=ReceiverDiagnosticUpload(applicationContext,journal)
+        ui.audit={event,detail -> journal.event("operation",event,detail)}
+        ui.refreshLocalLog={uploadWorker.execute {
+            val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
+            main.post {if(!destroyed) ui.logs=text}
+        }}
+        journal.event("lifecycle","activity_create")
+        ui.uploadPaired=uploader.enrolled;ui.lastReport=uploader.lastReport
         store=ReceiverStore(this)
         window.setDecorFitsSystemWindows(false)
         window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.TRANSPARENT
         onBackPressedDispatcher.addCallback(this,object:androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                ui.audit("system_back","")
                 if(ui.dismissTopLayer()) return
                 if(busy || connected) endAttempt("已返回连接页，可重新连接。")
                 else { isEnabled=false;onBackPressedDispatcher.onBackPressed() }
@@ -75,16 +88,17 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         video=SurfaceView(this)
         root.addView(video, FrameLayout.LayoutParams(-1,-1))
         video.holder.addCallback(object: SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) { currentSurface=holder.surface; sink?.setSurface(110,holder.surface) }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) = Unit
+            override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface) }
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format")}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                currentSurface=null
+                journal.event("video","surface_destroyed");currentSurface=null
                 // Upstream's bounded detach handshake must complete before Surface destruction returns.
                 sink?.beginSurfaceDetach(holder.surface, false)?.await()
             }
         })
         video.setOnTouchListener { view,event ->
             if (connected) {
+                if(event.actionMasked!=MotionEvent.ACTION_MOVE) journal.event("touch","carplay_touch","action=${event.actionMasked} pointers=${event.pointerCount}")
                 val contacts=(0 until minOf(event.pointerCount,2)).map { i ->
                     val released=event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL || (event.actionMasked==MotionEvent.ACTION_POINTER_UP && i==event.actionIndex)
                     AirPlayContact(event.getPointerId(i), (event.getX(i)/view.width).toDouble().coerceIn(0.0,1.0), (event.getY(i)/view.height).toDouble().coerceIn(0.0,1.0), !released)
@@ -98,25 +112,27 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             setContent {
                 ReceiverApp(ui,
                     onMode={ switchMode(it) },
-                    onPrimary={ if(busy) endAttempt("已取消连接") else connect() },
-                    onDisconnect={ endAttempt("已断开，可重新连接") },
-                    onBluetooth={ saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
+                    onUpload={retry -> uploadDiagnostics(retry) },
+                    onPairUpload={code -> pairDiagnostics(code) },
+                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(busy) endAttempt("已取消连接") else connect() },
+                    onDisconnect={ journal.event("operation","disconnect_pressed");endAttempt("已断开，可重新连接") },
+                    onBluetooth={ journal.event("operation","open_system_bluetooth");saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     onPhone={ loadPhoneChoices() },
                     onPhoneSelected={ address,name ->
                         if(!busy && !stopping) {
-                            phone=address;phoneName=name;ui.phoneName=name
+                            journal.event("operation","phone_selected","automatic=${address==null}");phone=address;phoneName=name;ui.phoneName=name
                             store.prefs.edit().putString("phone",phone).putString("phone_name",phoneName).apply()
                         }
                     },
                     onPlayback={ audio,value ->
                         if(!busy && !stopping) {
-                            store.prefs.edit().putInt(if(audio) "media_buffer_ms" else "video_fps",value).apply()
+                            journal.event("operation","playback_changed","setting=${if(audio) "buffer" else "fps"} value=$value");store.prefs.edit().putInt(if(audio) "media_buffer_ms" else "video_fps",value).apply()
                             refreshPlaybackLabels()
                         }
                     },
                     onFullscreen={ hidden ->
                         if(ui.editable) {
-                            ui.hideSystemBars=hidden
+                            journal.event("operation","system_bars_changed","hidden=$hidden");ui.hideSystemBars=hidden
                             store.prefs.edit().putBoolean("hide_system_bars",hidden).apply()
                             ReceiverSystemBars.apply(this@GeelyActivity,hidden)
                         }
@@ -128,6 +144,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         loadInputs();refreshPlaybackLabels();ui.hideSystemBars=store.prefs.getBoolean("hide_system_bars",false);applyState()
     }
     internal fun switchMode(next:ConnectionMode) {
+        journal.event("operation","connection_mode_selected","mode=$next blocked=${busy || stopping}")
         if(busy || stopping || next==mode) return
         saveInputs();mode=next;store.prefs.edit().putString("mode",mode.name).apply();loadInputs()
     }
@@ -141,8 +158,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.password=store.prefs.getString(key("password"),"").orEmpty()
         ui.networkInterface=store.prefs.getString("interface","wlan0").orEmpty()
         ui.phoneName=phoneName
+        journal.protect(ui.ssid,ui.password,phoneName)
     }
     private fun saveInputs() {
+        journal.protect(ui.ssid,ui.password,phoneName)
         store.prefs.edit().putString(key("ssid"),ui.ssid).putString(key("password"),ui.password)
             .putString("interface",ui.networkInterface.trim()).apply()
     }
@@ -151,27 +170,34 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val missing=missingPermissions()
         if(missing.isEmpty()) return true
         update("CarPlay 音频协商需要麦克风权限；仅在 iPhone 请求麦克风通道时采集，不保存录音。")
-        pendingPermissions=true;requestPermissions(missing,10);return false
+        journal.event("permissions","request","permissions=${missing.joinToString()}");pendingPermissions=true;requestPermissions(missing,10);return false
     }
     override fun onRequestPermissionsResult(code:Int, permissions:Array<out String>, results:IntArray) {
         super.onRequestPermissionsResult(code,permissions,results)
         if(code==10 && pendingPermissions) {
+            journal.event("permissions","result","granted=${missingPermissions().isEmpty()} denied=${missingPermissions().joinToString()}")
             pendingPermissions=false
             if(missingPermissions().isEmpty()) connect() else update(if(Manifest.permission.RECORD_AUDIO in missingPermissions()) "麦克风权限未允许，无法提供完整 CarPlay 音频能力。请允许麦克风权限后重试。" else "蓝牙权限被拒绝。请在系统应用权限中允许附近设备，然后重试。")
         }
     }
     private fun loadPhoneChoices() {
+        journal.event("operation","phone_picker_open")
         try {
             if(missingPermissions().isNotEmpty()) { update("请先点击连接并允许所需权限，再选择手机。");return }
             val devices=getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.toList().orEmpty()
             if(devices.isEmpty()) { update("没有已配对手机，请先在设置中打开蓝牙配对。");return }
+            devices.forEach {journal.protect(it.name.orEmpty(),it.address)}
             ui.phoneChoices=listOf(null to "自动选择已配对的 iPhone")+devices.map { it.address to (it.name ?: "已配对设备") }
             ui.dialog=ReceiverDialog.PHONE
         } catch (_: SecurityException) { update("蓝牙权限已变化，请允许权限后重试。") }
     }
     private fun connect() {
-        if(busy || stopping || controller!=null || destroyed || !foreground) return
+        if(busy || stopping || controller!=null || destroyed || !foreground) {journal.event("connection","duplicate_or_inactive_blocked");return}
         if(!requestNecessaryPermissions()) return
+        try {getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.forEach {journal.protect(it.name.orEmpty(),it.address)}} catch(_:SecurityException) {journal.event("permissions","device_identity_unavailable",level="WARN")}
+        journal.attempt=java.util.UUID.randomUUID().toString()
+        journal.event("connection","attempt_start","mode=$mode bufferMs=${ui.bufferMs} fps=${ui.fps} interface=${ui.networkInterface.take(32).replace(Regex("[^A-Za-z0-9_.:-]"),"?")}")
+        networkDiagnostic()
         val lease=Any()
         if (!ReceiverSessionGate.acquire(lease)) { update("上一连接仍在释放，请稍后重试。");return }
         leaseToken=lease
@@ -223,7 +249,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun listener(token:Int)=object:AirPlaySessionListener {
         override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session; update("CarPlay 会话已建立，正在等待画面…") } } }
-        override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && currentAirPlaySession===session) {
+        override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
             connected=true;timeout?.let(main::removeCallbacks);update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
         override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) endAttempt("iPhone 已断开，可重新连接。") } }
@@ -261,6 +287,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun endAttempt(reason:String) {
         if(stopping) return
+        journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
@@ -270,6 +297,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             val transportReleased=old?.awaitClosed(8_000) ?: true
             val mediaReleased=runCatching { renderer?.close() }.isSuccess
             val released=transportReleased && mediaReleased
+            journal.event("connection","resources_released","transport=$transportReleased media=$mediaReleased",if(released) "INFO" else "ERROR")
             if (released) ReceiverSessionGate.release(lease)
             main.post { if(!destroyed) {
                 stopping=!released
@@ -283,35 +311,78 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(connected) { ui.settingsOpen=false;ui.dialog=null }
     }
     private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
-    @Synchronized private fun log(value:String) {
-        if(destroyed) return
-        val safe=if(secret.isNotEmpty()) value.replace(secret,"[redacted]") else value
-        runCatching {
-            val file=File(filesDir,"connection.log")
-            if(file.length()>256*1024) file.writeText(file.readText().takeLast(128*1024))
-            file.appendText("${System.currentTimeMillis()} "+safe.take(2000)+"\n")
-        }
+    private fun log(value:String) {
+        journal.event(if(value.startsWith("Audio:") || value.startsWith("audio ")) "audio" else "protocol","diagnostic",value,
+            if(value.contains("失败") || value.contains("exception",true)) "WARN" else "INFO")
     }
     private fun loadLogs() {
-        ui.logs=runCatching { File(filesDir,"connection.log").readText().takeLast(20_000) }.getOrDefault("尚无连接记录")
-        ui.dialog=ReceiverDialog.LOGS
+        journal.event("operation","diagnostics_open");ui.dialog=ReceiverDialog.DIAGNOSTICS
+        uploadWorker.execute {val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
+            main.post {if(!destroyed) {ui.logs=text;ui.pendingUpload=journal.pending()!=null;ui.uploadPaired=uploader.enrolled;ui.lastReport=uploader.lastReport}}
+        }
+    }
+    private fun networkDiagnostic() {
+        runCatching {
+            val manager=getSystemService(android.net.ConnectivityManager::class.java)
+            val caps=manager.getNetworkCapabilities(manager.activeNetwork)
+            journal.event("network","snapshot","wifi=${caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)} cellular=${caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)} validated=${caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
+        }
+    }
+    private fun pairDiagnostics(code:String) {
+        if(ui.uploadBusy) return
+        ui.uploadBusy=true;ui.uploadMessage="正在连接日志服务器…"
+        uploadWorker.execute {
+            val result=runCatching {uploader.enroll(code)}
+            result.exceptionOrNull()?.let {journal.event("upload","pair_failed","type=${it.javaClass.simpleName} message=${it.message.orEmpty()}","ERROR")}
+            main.post {if(!destroyed) {
+                ui.uploadBusy=false;ui.uploadPaired=uploader.enrolled
+                ui.uploadMessage=if(result.isSuccess) "日志服务器已连接，以后可一键上传。" else "连接失败：请检查配对码有效期和网络后重试。"
+            }}
+        }
+    }
+    private fun uploadDiagnostics(retry:Boolean) {
+        if(ui.uploadBusy) return
+        if(!uploader.enrolled) {ui.dialog=ReceiverDialog.PAIR_UPLOAD;return}
+        ui.uploadBusy=true;ui.uploadMessage="正在整理并脱敏日志…"
+        journal.event("operation","upload_requested","retry=$retry")
+        val issue=ui.issue
+        uploadWorker.execute {
+            val result=runCatching {
+                val bundle=if(retry) journal.pending() ?: journal.snapshot(issue) else journal.snapshot(issue)
+                uploader.upload(bundle) {done,total ->main.post {if(!destroyed) ui.uploadMessage="上传中：${done/1024}/${total/1024}KB"}}
+            }
+            main.post {if(!destroyed) {
+                ui.uploadBusy=false;ui.uploadPaired=uploader.enrolled;ui.pendingUpload=journal.pending()!=null
+                ui.lastReport=uploader.lastReport
+                ui.uploadMessage=if(result.isSuccess) "上传成功，诊断编号：${result.getOrNull()}" else "上传失败，日志已保留。请检查互联网连接后点重试；若凭据失效请重新配对。"
+            }}
+        }
     }
     override fun onConfigurationChanged(config:Configuration) {
         super.onConfigurationChanged(config)
+        journal.event("display","configuration_changed","orientation=${config.orientation} widthDp=${config.screenWidthDp} heightDp=${config.screenHeightDp} density=${config.densityDpi} fontScale=${config.fontScale} night=${config.uiMode}")
         video.post {
             if ((busy || connected) && ((video.width/2)*2 != configuredWidth || (video.height/2)*2 != configuredHeight)) {
                 endAttempt("显示尺寸已变化，请重新连接。")
             }
         }
     }
-    override fun onStart() { super.onStart();foreground=true;ReceiverSystemBars.apply(this,ui.hideSystemBars) }
+    override fun dispatchTouchEvent(event:MotionEvent):Boolean {
+        if(::journal.isInitialized && !connected && event.actionMasked!=MotionEvent.ACTION_MOVE)
+            journal.event("touch","app_touch","action=${event.actionMasked} pointers=${event.pointerCount} settings=${ui.settingsOpen} dialog=${ui.dialog}")
+        return super.dispatchTouchEvent(event)
+    }
+    override fun onResume() {super.onResume();journal.event("lifecycle","resume")}
+    override fun onPause() {journal.event("lifecycle","pause");super.onPause()}
+    override fun onStart() { super.onStart();foreground=true;journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
+    override fun onStop() { journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
-        destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
+        journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
     }
 }
