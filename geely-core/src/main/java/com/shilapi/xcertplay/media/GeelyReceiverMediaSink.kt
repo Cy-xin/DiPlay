@@ -59,6 +59,7 @@ class AndroidMediaSink(
     private val advancedAudioChannelMapping: Boolean = false,
     private val audioFocusEnabled: Boolean = false,
     private val audioFocusAutoYield: Boolean = true,
+    private val navigationMixEnabled: Boolean = false,
     private val mediaChannel: Int = 0,
     private val navigationChannel: Int = 0,
     navigationAttenuationDb: Int = 0,
@@ -123,6 +124,7 @@ class AndroidMediaSink(
         onAudioDiagnostic,
         factoryRouting = factoryAudio != null && !bluetoothOutput,
         unifiedMediaOutput = unifiedMediaOutput,
+        navigationMixEnabled = navigationMixEnabled,
         onOwnershipChanged = { owned -> ownsAudio = owned; audioOwnershipListener?.invoke(owned) },
     )
 
@@ -794,6 +796,7 @@ class AndroidMediaSink(
             unifiedMediaOutput,
             echoReference = echoReference,
             voiceFilter = callVoiceFilter && format.audioType == TELEPHONY_AUDIO_TYPE,
+            navigationMixEnabled = navigationMixEnabled,
             onReleased = { renderer ->
                 val callReleased = synchronized(audioModeLock) { closingCommunicationRenderers.remove(renderer) }
                 if (callReleased) finishCommunication(force = true)
@@ -1837,6 +1840,7 @@ private class AudioRenderer(
     private val unifiedMediaOutput: Boolean,
     private val onReleased: (AudioRenderer) -> Unit,
     private val speakerphoneCall: Boolean = false,
+    private val navigationMixEnabled: Boolean = false,
     /** Receives the played call audio so the call microphone can cancel its echo. */
     private val echoReference: EchoReference? = null,
     voiceFilter: Boolean = false,
@@ -2548,12 +2552,15 @@ private class AudioRenderer(
 
     private fun writePcm(data: ByteArray, offset: Int = 0, length: Int = data.size) {
         val track = track ?: return
-        // carlito | Navigation remains an overlay; short compatibility/voice audio interrupts music.
-        if (length > 0 && (format.audioType.equals("compatibility", true) ||
+        // Reuse upstream per-track arbitration: mobile-compatible navigation (including
+        // compatibility prompts) ducks media, while calls and Siri retain speech priority.
+        val guidance=navigationMixEnabled && mappedChannel==AudioChannel.NAVIGATION
+        if (length > 0 && (guidance || format.audioType.equals("compatibility", true) ||
                 mappedChannel in listOf(AudioChannel.PHONE, AudioChannel.ASSISTANT, AudioChannel.RINGTONE))) {
             val pendingFrames = bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes
             val durationMillis = ((pendingFrames + length / frameBytes) * 1000L + format.sampleRate - 1L) / format.sampleRate
-            audioFocusCoordinator.onSpeechPlayback(track, durationMillis)
+            if(guidance) audioFocusCoordinator.onNavigationPlayback(track,durationMillis)
+            else audioFocusCoordinator.onSpeechPlayback(track,durationMillis)
         }
         diagnosticStage = "track-write"
         if (!firstPcmLogged && length > 0) {

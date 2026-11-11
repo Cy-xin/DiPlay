@@ -20,6 +20,7 @@ internal class AudioFocusCoordinator(
     private val factoryRouting: Boolean = false,
     private val unifiedMediaOutput: Boolean = false,
     private val onOwnershipChanged: (Boolean) -> Unit = {},
+    private val navigationMixEnabled: Boolean = false,
 ) : Closeable {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes, var appliedVolume: Float = 1f) {
         val music = channel == AudioChannel.MEDIA && attributes.contentType != AudioAttributes.CONTENT_TYPE_SPEECH
@@ -44,6 +45,8 @@ internal class AudioFocusCoordinator(
     // carlito | Speech arbitration follows PCM playback, never a permanently negotiated stream.
     private val speechDeadlines = LinkedHashMap<AudioTrack, Long>()
     private var speechPlaying = false
+    private val navigationDeadlines=LinkedHashMap<AudioTrack,Long>()
+    private var navigationPlaying=false
     private var speechListener: ((Boolean) -> Unit)? = null
     private val vehicleRouting = factoryRouting || unifiedMediaOutput
     private var currentListener = listenerFor(requestGeneration)
@@ -88,7 +91,7 @@ internal class AudioFocusCoordinator(
 
     @Synchronized fun acquire(track: AudioTrack, channel: AudioChannel, attributes: AudioAttributes) {
         if (closed) return
-        if (!vehicleRouting && channel == AudioChannel.NAVIGATION) return
+        if (!vehicleRouting && !navigationMixEnabled && channel == AudioChannel.NAVIGATION) return
         active[track] = Entry(channel, attributes)
         if (active.getValue(track).music) mediaAttributes = attributes
         refreshRequest()
@@ -96,6 +99,7 @@ internal class AudioFocusCoordinator(
 
     @Synchronized fun release(track: AudioTrack) {
         speechDeadlines.remove(track)
+        navigationDeadlines.remove(track)
         refreshSpeechPlayback()
         if (active.remove(track) != null) {
             if (!vehicleRouting && active.isEmpty()) mediaAttributes = null
@@ -113,9 +117,21 @@ internal class AudioFocusCoordinator(
         refreshSpeechPlayback()
     }
 
+    @Synchronized fun onNavigationPlayback(track:AudioTrack,bufferedMillis:Long) {
+        if(closed || !navigationMixEnabled) return
+        navigationDeadlines[track]=SystemClock.elapsedRealtime()+bufferedMillis.coerceAtLeast(0L)+150L
+        refreshSpeechPlayback()
+    }
+
     @Synchronized fun refreshSpeechPlayback() {
         if (closed) return
         val now = SystemClock.elapsedRealtime()
+        navigationDeadlines.entries.removeAll {it.value<=now}
+        val guidance=navigationDeadlines.isNotEmpty()
+        if(guidance!=navigationPlaying) {
+            navigationPlaying=guidance;applyVolumes()
+            runCatching {report("Audio: navigation overlay playing=$guidance mediaDuck=$DUCKED_VOLUME")}
+        }
         speechDeadlines.entries.removeAll { it.value <= now }
         val playing = speechDeadlines.isNotEmpty()
         if (playing == speechPlaying) return
@@ -184,6 +200,7 @@ internal class AudioFocusCoordinator(
         abandonRequest()
         active.clear(); captures.clear(); mediaAttributes = null
         speechDeadlines.clear(); speechPlaying = false; speechListener = null
+        navigationDeadlines.clear();navigationPlaying=false
         publishOwnership(false)
     }
 
@@ -238,7 +255,11 @@ internal class AudioFocusCoordinator(
     private fun applyVolumes() {
         if (!vehicleRouting) {
             active.forEach { (track, entry) ->
-                val volume = if (speechPlaying && entry.music) 0f else if (enabled && manager != null && entry.music) focusVolume else 1f
+                val volume = when {
+                    entry.music && speechPlaying -> 0f
+                    entry.music -> (if(enabled && manager!=null) focusVolume else 1f) * (if(navigationPlaying) DUCKED_VOLUME else 1f)
+                    else -> 1f
+                }
                 if (entry.appliedVolume != volume) {
                     val applied = runCatching { track.setStereoVolume(volume, volume) == AudioTrack.SUCCESS }.getOrDefault(false)
                     if (applied) entry.appliedVolume = volume

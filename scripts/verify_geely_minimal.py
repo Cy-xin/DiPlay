@@ -9,10 +9,15 @@ assert "package: name='com.shihab.diplay'" in badging
 assert "application-label:'DiPlay Geely'" in badging
 assert "sdkVersion:'30'" in badging
 manifest=subprocess.check_output([str(aapt),'dump','xmltree',str(a.apk),'AndroidManifest.xml'],text=True)
-for component in ('service','receiver','provider'):
+for component in ('receiver','provider'):
  assert not re.search(r'\bE: '+component+r'\b',manifest),f'Unexpected {component}'
 assert len(re.findall(r'\bE: activity\b',manifest))==1
-for perm in ('RECEIVE_BOOT_COMPLETED','SYSTEM_ALERT_WINDOW','WRITE_SETTINGS','READ_LOGS','REQUEST_INSTALL_PACKAGES','MANAGE_OWN_CALLS','FOREGROUND_SERVICE'):
+assert len(re.findall(r'\bE: service\b',manifest))==1
+service=manifest.split('E: service',1)[1].split('E: ',1)[0]
+assert 'com.shilapi.xcertplay.geely.ReceiverSessionService' in service
+assert re.search(r'android:exported[^\n]*0x0',service)
+assert 'android:foregroundServiceType' in service
+for perm in ('RECEIVE_BOOT_COMPLETED','SYSTEM_ALERT_WINDOW','WRITE_SETTINGS','READ_LOGS','REQUEST_INSTALL_PACKAGES','MANAGE_OWN_CALLS'):
  assert perm not in badging,perm
 assert 'android.permission.RECORD_AUDIO' in badging
 with zipfile.ZipFile(a.apk) as z:
@@ -32,5 +37,5 @@ for line in mapping.splitlines():
    retained.append(original)
 for marker in ('.hud.', '.vehicle.', '.glance.', '.media.Ambient', '.network.WifiP2pGroupManager', '.network.LocalOnlyHotspotManager', '.network.CarHotspotTethering', '.transport.IphoneUsbHost', '.transport.Ch341Usb', '.network.CarPlayVpnService'):
  assert not any(marker in name for name in retained),f'Retained excluded implementation: {marker}'
-result={'package':'com.shihab.diplay','label':'DiPlay Geely','min_sdk':30,'target_sdk':30,'bytes':a.apk.stat().st_size,'sha256':hashlib.sha256(a.apk.read_bytes()).hexdigest(),'components':{'activities':1,'services':0,'receivers':0,'providers':0},'authentication':'Selected local files match APK assets; no key contents emitted','excluded_implementations':'R8 mapping check passed','physical_carplay':'NOT TESTED: real iPhone/head unit required'}
+result={'package':'com.shihab.diplay','label':'DiPlay Geely','min_sdk':30,'target_sdk':30,'bytes':a.apk.stat().st_size,'sha256':hashlib.sha256(a.apk.read_bytes()).hexdigest(),'components':{'activities':1,'services':1,'receivers':0,'providers':0},'authentication':'Selected local files match APK assets; no key contents emitted','excluded_implementations':'R8 mapping check passed','physical_carplay':'NOT TESTED: real iPhone/head unit required'}
 a.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n');print(json.dumps(result,ensure_ascii=False,indent=2))

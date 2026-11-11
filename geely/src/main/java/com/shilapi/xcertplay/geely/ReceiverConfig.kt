@@ -18,12 +18,12 @@ internal data class ReceiverConfig(val mode: ConnectionMode, val ssid: String, v
 }
 
 /** Same identity fallback as upstream when Android hides the physical Bluetooth address. */
-internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPlayIdentity, width: Int, height: Int, fps: Int = 30): com.shilapi.xcertplay.airplay.AirPlayConfig {
+internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPlayIdentity, width: Int, height: Int, fps: Int = 30, icons: List<com.shilapi.xcertplay.airplay.AirPlayIcon> = emptyList()): com.shilapi.xcertplay.airplay.AirPlayConfig {
     val id = ReceiverStore.deviceId(identity)
     return com.shilapi.xcertplay.airplay.AirPlayConfig(
         "DiPlay Geely", id, id, "950.7.1",
         com.shilapi.xcertplay.airplay.AirPlayDisplayConfig(width, height, fps = ReceiverPlaybackSettings.sanitizeFps(fps)),
-        manufacturer = "DiPlay", model = "KX11_A2", oemLabel = "DiPlay Geely",
+        manufacturer = "DiPlay", model = "KX11_A2", oemLabel = "吉利", icons = icons,
         microphone = true, mainBufferedAudio = true,
     )
 }
@@ -34,4 +34,11 @@ internal object ReceiverPlaybackSettings {
     val fpsChoices = listOf(30, 60)
     fun sanitizeBuffer(value: Int) = value.takeIf { it in bufferChoices } ?: 200
     fun sanitizeFps(value: Int) = value.takeIf { it in fpsChoices } ?: 30
+}
+
+/** Same bundled artwork and advertised PNG fields as the original DiPlay car-home button. */
+internal fun receiverHomeIcons(context:android.content.Context):List<com.shilapi.xcertplay.airplay.AirPlayIcon> {
+    val bytes=context.resources.openRawResource(R.raw.ic_car_home).use {it.readBytes()}
+    val (size,png)=checkNotNull(ReceiverHomeIconSizing.fit(bytes)) {"Invalid bundled Geely icon"}
+    return listOf(com.shilapi.xcertplay.airplay.AirPlayIcon(size,size,png))
 }

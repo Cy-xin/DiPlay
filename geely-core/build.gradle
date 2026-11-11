@@ -11,5 +11,5 @@ dependencies {
     implementation libs.bouncycastle
     implementation libs.jmdns
 }
-android { testOptions { unitTests.returnDefaultValues = true } }
-dependencies { testImplementation libs.junit }
+android { testOptions { unitTests.returnDefaultValues = true; unitTests.includeAndroidResources = true } }
+dependencies { testImplementation libs.junit; testImplementation "org.robolectric:robolectric:4.17" }

@@ -1,5 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 <uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -12,7 +16,8 @@
 <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
 <application android:label="DiPlay Geely" android:theme="@style/GeelyTheme"
  android:enableOnBackInvokedCallback="true" android:allowBackup="false" android:usesCleartextTraffic="true" android:supportsRtl="true">
-<!-- Foreground-only receiver: no dependency-driven startup or profiling entry points. -->
+<!-- Only an explicitly started connection has a foreground service; no boot or polling. -->
+<service android:name=".ReceiverSessionService" android:exported="false" android:stopWithTask="true" android:foregroundServiceType="connectedDevice|mediaPlayback|microphone" />
 <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" tools:node="remove" tools:ignore="MissingClass" />
 <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove" tools:ignore="MissingClass" />
 <activity android:name=".GeelyActivity" android:exported="true"

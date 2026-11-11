@@ -41,6 +41,58 @@ class ReceiverTest {
         reopened.pause().stop().destroy()
     }
 
+    @Test fun returningHomeAndStoppingActivityRetainConnectedSessionUntilExplicitDisconnect() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,true)
+        GeelyActivity::class.java.getDeclaredField("busy").apply {isAccessible=true}.set(activity,true)
+        activity.ui.showCarPlay=true;invoke(activity,"applyState")
+        val generation=field(activity,"generation")
+        activity.showReceiverHome()
+        assertTrue(activity.ui.connected);assertFalse(activity.ui.showCarPlay)
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertFalse(activity.isFinishing)
+        lifecycle.pause().stop()
+        assertEquals(generation,field(activity,"generation"));assertTrue(activity.ui.connected)
+        lifecycle.start().resume()
+        invoke(activity,"showCarPlay");assertTrue(activity.ui.showCarPlay)
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertTrue(activity.ui.connected);assertFalse(activity.ui.showCarPlay)
+        activity.disconnectFromNotification()
+        assertFalse(activity.ui.connected)
+        (field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
+    }
+    @Test fun hostResolutionChangeFitsTheExistingSessionInsteadOfDisconnecting() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
+        set("connected",true);set("busy",true);set("configuredWidth",1280);set("configuredHeight",720)
+        (field(activity,"root") as android.view.View).layout(0,0,720,1280)
+        val generation=field(activity,"generation")
+        activity.onConfigurationChanged(android.content.res.Configuration(activity.resources.configuration))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(generation,field(activity,"generation"));assertEquals(true,field(activity,"connected"))
+        val bounds=(field(activity,"video") as android.view.View).layoutParams
+        assertEquals(720,bounds.width);assertEquals(405,bounds.height)
+        activity.disconnectFromNotification();(field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
+    }
+    @Test fun bundledGeelyHomeIconIsAdvertisedAsRealPngInsteadOfEmptyOemEntry() {
+        val app=org.robolectric.RuntimeEnvironment.getApplication()
+        val icons=receiverHomeIcons(app);assertEquals(1,icons.size)
+        val icon=icons.single();assertEquals(icon.widthPixels,icon.heightPixels);assertTrue(icon.widthPixels in 1..ReceiverHomeIconSizing.MAX_PIXELS)
+        assertNotNull(android.graphics.BitmapFactory.decodeByteArray(icon.data,0,icon.data.size))
+        val air=receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1280,720,30,icons)
+        val info=com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(air)
+        assertEquals(true,info["oemIconVisible"]);assertEquals("吉利",info["oemIconLabel"])
+        val advertised=(info["oemIcons"] as List<*>).single() as Map<*,*>
+        assertArrayEquals(icon.data,advertised["imageData"] as ByteArray)
+    }
+    @Test fun idleUiDoesNotStartAConnectionService() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        assertNull(shadowOf(lifecycle.get().application).nextStartedService)
+        lifecycle.pause().stop().destroy()
+    }
+
     @Test fun hostWindowControlsOrientationInsteadOfForcingLandscape() {
         val app=org.robolectric.RuntimeEnvironment.getApplication()
         val info=app.packageManager.getActivityInfo(android.content.ComponentName(app,GeelyActivity::class.java),0)

@@ -25,7 +25,7 @@ import com.shilapi.xcertplay.transport.Iap2IdentificationConfig
 import java.io.File
 import java.util.concurrent.Executors
 
-/** Foreground-only receiver: one Activity, one explicit attempt, no services or boot receivers. */
+/** One explicitly started session; a non-sticky foreground service supports home-screen switching. */
 class GeelyActivity : androidx.activity.ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -74,7 +74,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             override fun handleOnBackPressed() {
                 ui.audit("system_back","")
                 if(ui.dismissTopLayer()) return
-                if(busy || connected) endAttempt("已返回连接页，可重新连接。")
+                if(connected && ui.showCarPlay) showReceiverHome()
+                else if(busy || connected) moveTaskToBack(true)
                 else { isEnabled=false;onBackPressedDispatcher.onBackPressed() }
             }
         })
@@ -93,11 +94,11 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 journal.event("video","surface_destroyed");currentSurface=null
                 // Upstream's bounded detach handshake must complete before Surface destruction returns.
-                sink?.beginSurfaceDetach(holder.surface, false)?.await()
+                sink?.beginSurfaceDetach(holder.surface, connected)?.await()
             }
         })
         video.setOnTouchListener { view,event ->
-            if (connected) {
+            if (connected && ui.showCarPlay) {
                 if(event.actionMasked!=MotionEvent.ACTION_MOVE) journal.event("touch","carplay_touch","action=${event.actionMasked} pointers=${event.pointerCount}")
                 val contacts=(0 until minOf(event.pointerCount,2)).map { i ->
                     val released=event.actionMasked==MotionEvent.ACTION_UP || event.actionMasked==MotionEvent.ACTION_CANCEL || (event.actionMasked==MotionEvent.ACTION_POINTER_UP && i==event.actionIndex)
@@ -114,7 +115,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     onMode={ switchMode(it) },
                     onUpload={retry -> uploadDiagnostics(retry) },
                     onPairUpload={code -> pairDiagnostics(code) },
-                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(busy) endAttempt("已取消连接") else connect() },
+                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(busy) endAttempt("已取消连接") else connect() },
+                    onHome={showReceiverHome()},
                     onDisconnect={ journal.event("operation","disconnect_pressed");endAttempt("已断开，可重新连接") },
                     onBluetooth={ journal.event("operation","open_system_bluetooth");saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     onPhone={ loadPhoneChoices() },
@@ -208,11 +210,15 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         secret=config.password
         val token=++generation
         busy=true;update("正在检查配置和认证资产…");applyState()
+        ReceiverSessionService.attach(this)
+        try {startForegroundService(Intent(this,ReceiverSessionService::class.java))}
+        catch(e:RuntimeException) {log("前台连接服务启动失败: ${e.javaClass.simpleName}");endAttempt("无法保持后台连接，请重新打开应用后重试。");return}
         timeout=Runnable { if(token==generation && busy && !connected) endAttempt("连接超时。请确认 iPhone 已加入网络、蓝牙已配对，并在手机上允许 CarPlay；局域网需关闭客户端隔离并允许组播，然后重试。") }.also { main.postDelayed(it,90_000) }
         val width=(video.width/2)*2;val height=(video.height/2)*2
         if(width<2 || height<2) {
             busy=false;ReceiverSessionGate.release(leaseToken);leaseToken=null
             timeout?.let(main::removeCallbacks);timeout=null
+            stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
             update("显示区域尚未就绪，请稍后重试。");applyState();return
         }
         configuredWidth=width;configuredHeight=height
@@ -227,12 +233,12 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     manualHotspotSsid=config.ssid,manualHotspotPassphrase=config.password,manualHotspotInterface=config.networkInterface,
                     manualHotspotSecurity=if(config.password.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2,
                     existingWifiSsid=config.ssid,existingWifiPassphrase=config.password)
-                val air=receiverAirPlayConfig(identity,width,height,videoFps)
+                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext))
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
-                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{ onStatus(token,it) })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
@@ -250,11 +256,11 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun listener(token:Int)=object:AirPlaySessionListener {
         override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session; update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
-            connected=true;timeout?.let(main::removeCallbacks);update("CarPlay 已连接，画面已解码显示");applyState()
+            connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
         override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) endAttempt("iPhone 已断开，可重新连接。") } }
         override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) endAttempt("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。") } }
-        override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation) endAttempt("已返回连接页，可重新连接。") } }
+        override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) showReceiverHome() } }
         override fun onCommand(session:AirPlaySession,type:String,params:Map<String,Any?>) {
             if(token!=generation || type!="modesChanged") return
             val resources=(params["resources"] as? List<*>).orEmpty().filterIsInstance<Map<*,*>>().map { row ->
@@ -277,6 +283,22 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             else -> Unit
         }
     }
+    internal fun showReceiverHome() {
+        if(!connected) return
+        ui.showCarPlay=false;ui.settingsOpen=false;ui.dialog=null
+        update("CarPlay 已连接。可返回画面，或主动断开连接。")
+        journal.event("operation","receiver_home_shown","session_retained=true")
+    }
+    private fun showCarPlay() {
+        if(!connected) return
+        ui.showCarPlay=true;ui.settingsOpen=false;ui.dialog=null
+        journal.event("operation","carplay_shown","session_retained=true")
+    }
+    internal fun disconnectFromNotification() {if(!destroyed && !stopping) endAttempt("已主动断开，可重新连接。");else stopService(Intent(this,ReceiverSessionService::class.java))}
+    override fun onNewIntent(intent:Intent) {
+        super.onNewIntent(intent)
+        if(intent.action==ReceiverSessionService.ACTION_OPEN) showCarPlay()
+    }
     private fun friendlyFailure(message:String):String = when {
         message.contains("paired",true) || message.contains("bonded",true) -> "未找到明确的已配对 iPhone，请先完成蓝牙配对；多部手机时展开配置选择一部。"
         message.contains("bluetoothMac",true) -> "本机蓝牙标识无效，无法启动 CarPlay 握手。请查看本地诊断。"
@@ -288,6 +310,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun endAttempt(reason:String) {
         if(stopping) return
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
+        stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
+        ui.showCarPlay=false
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
@@ -306,9 +330,19 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             } }
         }
     }
+    private fun fitSessionSurface() {
+        if((busy || connected) && configuredWidth>0 && configuredHeight>0 && root.width>0 && root.height>0) {
+            val scale=minOf(root.width.toFloat()/configuredWidth,root.height.toFloat()/configuredHeight)
+            val width=(configuredWidth*scale).toInt().coerceAtLeast(1)
+            val height=(configuredHeight*scale).toInt().coerceAtLeast(1)
+            video.layoutParams=FrameLayout.LayoutParams(width,height,android.view.Gravity.CENTER)
+            journal.event("display","surface_fit","width=$width height=$height session_retained=true")
+        } else if(!busy && !connected) video.layoutParams=FrameLayout.LayoutParams(-1,-1)
+    }
     private fun applyState() {
         ui.busy=busy;ui.stopping=stopping;ui.connected=connected
-        if(connected) { ui.settingsOpen=false;ui.dialog=null }
+        root.post {if(!destroyed) fitSessionSurface()}
+        if(connected && ui.showCarPlay) { ui.settingsOpen=false;ui.dialog=null }
     }
     private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
     private fun log(value:String) {
@@ -361,14 +395,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     override fun onConfigurationChanged(config:Configuration) {
         super.onConfigurationChanged(config)
         journal.event("display","configuration_changed","orientation=${config.orientation} widthDp=${config.screenWidthDp} heightDp=${config.screenHeightDp} density=${config.densityDpi} fontScale=${config.fontScale} night=${config.uiMode}")
-        video.post {
-            if ((busy || connected) && ((video.width/2)*2 != configuredWidth || (video.height/2)*2 != configuredHeight)) {
-                endAttempt("显示尺寸已变化，请重新连接。")
-            }
-        }
+        root.post {fitSessionSurface()}
     }
     override fun dispatchTouchEvent(event:MotionEvent):Boolean {
-        if(::journal.isInitialized && !connected && event.actionMasked!=MotionEvent.ACTION_MOVE)
+        if(::journal.isInitialized && (!connected || !ui.showCarPlay) && event.actionMasked!=MotionEvent.ACTION_MOVE)
             journal.event("touch","app_touch","action=${event.actionMasked} pointers=${event.pointerCount} settings=${ui.settingsOpen} dialog=${ui.dialog}")
         return super.dispatchTouchEvent(event)
     }
@@ -380,7 +410,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
+    override fun onStop() { journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()

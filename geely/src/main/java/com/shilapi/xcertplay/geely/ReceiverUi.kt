@@ -55,6 +55,7 @@ internal class ReceiverUiState {
     var busy by mutableStateOf(false)
     var stopping by mutableStateOf(false)
     var connected by mutableStateOf(false)
+    var showCarPlay by mutableStateOf(false)
     var message by mutableStateOf("未连接。请先连接网络并配对蓝牙。")
     var settingsOpen by mutableStateOf(false)
     var dialog by mutableStateOf<ReceiverDialog?>(null)
@@ -72,7 +73,7 @@ internal class ReceiverUiState {
     if(LocalConfiguration.current.locales[0].language=="en") en else zh
 
 @Composable internal fun ReceiverApp(
-    ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
+    ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,onHome:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
     onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
 ) {
@@ -85,16 +86,17 @@ internal class ReceiverUiState {
         val dark=LocalReceiverDark.current
         SideEffect {
             (context as? Activity)?.window?.insetsController?.setSystemBarsAppearance(
-                if(dark || ui.connected) 0 else WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+                if(dark || ui.connected && ui.showCarPlay) 0 else WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
         }
         // Wait for the stored mode instead of briefly presenting the wrong themed controls.
         if(theme==null) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         if(theme!=null) {
-            if(ui.connected) {
+            if(ui.connected && ui.showCarPlay) {
                 Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                    FilledTonalButton(onDisconnect,Modifier.align(Alignment.TopEnd).padding(16.dp).heightIn(min=56.dp),shape=ReceiverTokens.control) {
-                        Text(tr("断开 CarPlay","Disconnect CarPlay"),fontSize=16.sp)
+                    Row(Modifier.align(Alignment.TopEnd).padding(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onHome,Modifier.heightIn(min=48.dp),shape=ReceiverTokens.control) {Text(tr("返回 DiPlay","Back to DiPlay"),fontSize=14.sp)}
+                        FilledTonalButton(onDisconnect,Modifier.heightIn(min=48.dp),shape=ReceiverTokens.control) {Text(tr("断开","Disconnect"),fontSize=14.sp)}
                     }
                 }
             } else {
@@ -107,7 +109,7 @@ internal class ReceiverUiState {
                                     ui.audit("theme_selected","mode=$mode")
                                     scope.launch { try { appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode") } catch(_:java.io.IOException) { themeError=true;ui.audit("theme_save_failed","") } }
                                 }
-                                else -> ConnectionPage(ui,onMode,onPrimary,onLogs)
+                                else -> ConnectionPage(ui,onMode,onPrimary,onLogs,onDisconnect)
                             }
                         }
                         GlassNavigation(ui,onLogs)
@@ -167,7 +169,7 @@ internal class ReceiverUiState {
         aside()
     }
 }
-@Composable private fun ConnectionPage(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onLogs:()->Unit) {
+@Composable private fun ConnectionPage(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onLogs:()->Unit,onDisconnect:()->Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide=ReceiverLayoutPolicy.twoColumns(maxWidth.value,LocalDensity.current.fontScale)
         val short=maxHeight/LocalDensity.current.fontScale<420.dp
@@ -176,7 +178,7 @@ internal class ReceiverUiState {
         Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Text("DiPlay Geely",Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
-                GlassSurface {Text(if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
+                GlassSurface {Text(if(ui.connected) tr("已连接","Connected") else if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 16.dp)) {
                 if(!short) Text(tr("连接，让旅途更轻松","Connect. Enjoy the journey."),fontSize=30.sp,fontWeight=FontWeight.Bold)
@@ -188,7 +190,7 @@ internal class ReceiverUiState {
                     } else Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {ConfigurationHeading(ui);ConnectionFields(ui)}
                 }
             }
-            ConnectionFooter(ui,horizontalFooter,onPrimary,onLogs)
+            ConnectionFooter(ui,horizontalFooter,onPrimary,onLogs,onDisconnect)
         }
     }
 }
@@ -249,20 +251,21 @@ internal class ReceiverUiState {
         }
     }
 }
-@Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit) {
+@Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit,onDisconnect:()->Unit) {
     val keyboard=LocalSoftwareKeyboardController.current
     val focus=LocalFocusManager.current
     val haptic=LocalHapticFeedback.current
     @Composable fun status(modifier:Modifier) {
         Column(modifier.semantics { liveRegion=LiveRegionMode.Polite }) {
-            if(ui.busy && !ui.stopping) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom=8.dp))
+            if(ui.busy && !ui.connected && !ui.stopping) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom=8.dp))
             Text(tr(ui.message,receiverStatusEnglish(ui.message)),fontSize=14.sp,color=MaterialTheme.colorScheme.onSurface,maxLines=2,overflow=TextOverflow.Ellipsis)
+            if(ui.connected) TextButton(onDisconnect,enabled=!ui.stopping) {Text(tr("断开连接","Disconnect"))}
         }
     }
     @Composable fun action(modifier:Modifier) {
         Button({ ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary() },
             modifier.heightIn(min=56.dp),enabled=!ui.stopping,shape=CircleShape) {
-            Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
+            Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.connected) tr("返回 CarPlay","Return to CarPlay") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
         }
     }
     Box(Modifier.fillMaxWidth()) {
