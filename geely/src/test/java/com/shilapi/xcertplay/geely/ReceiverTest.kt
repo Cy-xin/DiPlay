@@ -43,6 +43,27 @@ class ReceiverTest {
         }
     }
 
+    @Test fun playbackChoicesSurviveReopenAndReachProtocolWithoutClaiming120Fps() {
+        var lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        val store=field(lifecycle.get(),"store") as ReceiverStore
+        store.prefs.edit().putInt("media_buffer_ms",150).putInt("video_fps",60).commit()
+        lifecycle.pause().stop().destroy()
+        lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        assertTrue((field(lifecycle.get(),"audioButton") as android.widget.Button).text.contains("150ms"))
+        assertTrue((field(lifecycle.get(),"fpsButton") as android.widget.Button).text.contains("60"))
+        val config=receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1280,720,60)
+        assertEquals(60,config.main.fps)
+        val advertised=com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(config)["displays"] as List<*>
+        assertEquals(60,(advertised.first() as Map<*,*>)["maxFPS"])
+        assertEquals(30,ReceiverPlaybackSettings.sanitizeFps(120))
+        for(buffer in ReceiverPlaybackSettings.bufferChoices) {
+            val plan=com.shilapi.xcertplay.media.MediaAudioBuffer.plan(true,48000,2,1024,buffer)
+            assertEquals(48000*4*buffer/1000,plan.startBytes)
+        }
+        assertEquals(200,ReceiverPlaybackSettings.sanitizeBuffer(-1))
+        lifecycle.pause().stop().destroy()
+    }
+
     @Test fun rejectsOversizeUtf8SsidAndInvalidPasswordWithoutLoggingCredentials() {
         for(config in listOf(ReceiverConfig(ConnectionMode.SAME_LAN,"中".repeat(11),"12345678","",null),ReceiverConfig(ConnectionMode.SAME_LAN,"wifi","short","",null))) {
             try { config.validate();fail("Expected invalid configuration") } catch(_:IllegalArgumentException) {}

@@ -54,6 +54,8 @@ class GeelyActivity : Activity() {
     private lateinit var iface: EditText
     private lateinit var help: TextView
     private lateinit var phoneButton: Button
+    private lateinit var audioButton: Button
+    private lateinit var fpsButton: Button
     private lateinit var disconnect: Button
     private lateinit var video: SurfaceView
     private var mode = ConnectionMode.CAR_HOTSPOT
@@ -150,7 +152,11 @@ class GeelyActivity : Activity() {
         val options=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
         form.addView(button("连接选项") { options.visibility=if(options.visibility==View.VISIBLE) View.GONE else View.VISIBLE })
         options.addView(text("热点网络接口",16f));options.addView(iface)
-        phoneButton=button(phoneName) { choosePhone() };options.addView(phoneButton);form.addView(options)
+        phoneButton=button(phoneName) { choosePhone() };options.addView(phoneButton)
+        audioButton=button("") { choosePlaybackSetting(true) };options.addView(audioButton)
+        fpsButton=button("") { choosePlaybackSetting(false) };options.addView(fpsButton)
+        options.addView(text("下次连接生效。缓冲越低越易断音；帧率越高负载越大。120 帧暂不支持。",16f))
+        form.addView(options);refreshPlaybackLabels()
         footer=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(8),0,0) }
         status=text(message,16f).apply {
             maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END
@@ -194,6 +200,29 @@ class GeelyActivity : Activity() {
         status.layoutParams=if(wide) LinearLayout.LayoutParams(0,-2,1f) else LinearLayout.LayoutParams(-1,-2)
         primary.layoutParams=LinearLayout.LayoutParams(if(wide) dp(224) else -1,-2)
     }
+    private fun refreshPlaybackLabels() {
+        val buffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
+        val fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
+        audioButton.text="音频缓冲：${buffer}ms"
+        fpsButton.text="CarPlay 帧率：${fps} 帧"
+    }
+    private fun choosePlaybackSetting(audio: Boolean) {
+        if(busy || connected || stopping) return
+        val values=if(audio) ReceiverPlaybackSettings.bufferChoices else ReceiverPlaybackSettings.fpsChoices
+        val key=if(audio) "media_buffer_ms" else "video_fps"
+        val current=store.prefs.getInt(key,if(audio) 200 else 30)
+        val labels=values.map { value ->
+            if(audio) "${value}ms" + when(value) { 100 -> "（更低延迟，易断音）";200 -> "（当前默认）";300 -> "（原版默认）";1000 -> "（更稳，延迟较高）";else -> "" }
+            else "$value 帧" + if(value==30) "（负载较低）" else "（更流畅，负载较高）"
+        }.toTypedArray()
+        AlertDialog.Builder(this).setTitle(if(audio) "音频缓冲 · 下次连接生效" else "CarPlay 帧率 · 下次连接生效")
+            .setSingleChoiceItems(labels,values.indexOf(current).coerceAtLeast(0)) { dialog,index ->
+                if(!busy && !connected && !stopping) {
+                    store.prefs.edit().putInt(key,values[index]).apply();refreshPlaybackLabels()
+                }
+                dialog.dismiss()
+            }.setNegativeButton("取消",null).show()
+    }
     private fun key(name: String) = "${mode.name}_$name"
     private fun loadInputs() {
         ssid.setText(store.prefs.getString(key("ssid"),""));password.setText(store.prefs.getString(key("password"),""));iface.setText(store.prefs.getString("interface","wlan0"))
@@ -235,6 +264,8 @@ class GeelyActivity : Activity() {
         leaseToken=lease
         saveInputs()
         val config=ReceiverConfig(mode,ssid.text.toString(),password.text.toString(),iface.text.toString().trim(),phone)
+        val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
+        val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         secret=config.password
         val token=++generation
         busy=true;update("正在检查配置和认证资产…");applyState()
@@ -257,15 +288,15 @@ class GeelyActivity : Activity() {
                     manualHotspotSsid=config.ssid,manualHotspotPassphrase=config.password,manualHotspotInterface=config.networkInterface,
                     manualHotspotSecurity=if(config.password.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2,
                     existingWifiSsid=config.ssid,existingWifiPassphrase=config.password)
-                val air=receiverAirPlayConfig(identity,width,height)
+                val air=receiverAirPlayConfig(identity,width,height,videoFps)
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
-                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,mediaBufferMillis=200,videoFps=30,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=this,audioFocusEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{ onStatus(token,it) })
-                        log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio}")
+                        log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
                         controller=next;next.start()
                     } catch(e:Exception) { log("启动失败: "+e.javaClass.simpleName);endAttempt("无法启动连接：请检查本地诊断并重试。") }
                 }
@@ -339,7 +370,7 @@ class GeelyActivity : Activity() {
         disconnect.visibility=if(connected) View.VISIBLE else View.GONE
         primary.text=if(stopping) "正在结束连接…" else if(busy) "取消连接" else "连接 CarPlay"
         primary.isEnabled=!stopping
-        listOf(modeHotspot,modeLan,ssid,password,iface,phoneButton).forEach { it.isEnabled=!busy && !stopping }
+        listOf(modeHotspot,modeLan,ssid,password,iface,phoneButton,audioButton,fpsButton).forEach { it.isEnabled=!busy && !stopping }
         if(mode==ConnectionMode.SAME_LAN) iface.isEnabled=false
     }
     private fun update(value:String) { message=value;status.text=value;log(value) }

@@ -18,12 +18,20 @@ internal data class ReceiverConfig(val mode: ConnectionMode, val ssid: String, v
 }
 
 /** Same identity fallback as upstream when Android hides the physical Bluetooth address. */
-internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPlayIdentity, width: Int, height: Int): com.shilapi.xcertplay.airplay.AirPlayConfig {
+internal fun receiverAirPlayConfig(identity: com.shilapi.xcertplay.airplay.AirPlayIdentity, width: Int, height: Int, fps: Int = 30): com.shilapi.xcertplay.airplay.AirPlayConfig {
     val id = ReceiverStore.deviceId(identity)
     return com.shilapi.xcertplay.airplay.AirPlayConfig(
         "DiPlay Geely", id, id, "950.7.1",
-        com.shilapi.xcertplay.airplay.AirPlayDisplayConfig(width, height, fps = 30),
+        com.shilapi.xcertplay.airplay.AirPlayDisplayConfig(width, height, fps = ReceiverPlaybackSettings.sanitizeFps(fps)),
         manufacturer = "DiPlay", model = "KX11_A2", oemLabel = "DiPlay Geely",
         microphone = true, mainBufferedAudio = true,
     )
+}
+
+/** Session preferences are snapshotted before connecting, never changed under a running decoder. */
+internal object ReceiverPlaybackSettings {
+    val bufferChoices = listOf(100, 150, 200, 300, 500, 1000)
+    val fpsChoices = listOf(30, 60)
+    fun sanitizeBuffer(value: Int) = value.takeIf { it in bufferChoices } ?: 200
+    fun sanitizeFps(value: Int) = value.takeIf { it in fpsChoices } ?: 30
 }
