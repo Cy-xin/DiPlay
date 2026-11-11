@@ -1,0 +1,7 @@
+<resources>
+<style name="GeelyTheme" parent="android:style/Theme.Material.NoActionBar">
+<item name="android:fontFamily">sans</item><item name="android:colorAccent">#9FBEFF</item>
+<item name="android:windowActionModeOverlay">true</item><item name="android:windowLightStatusBar">false</item>
+<item name="android:windowBackground">#151D29</item><item name="android:statusBarColor">#151D29</item>
+<item name="android:navigationBarColor">#151D29</item><item name="android:windowSoftInputMode">adjustResize</item>
+</style></resources>

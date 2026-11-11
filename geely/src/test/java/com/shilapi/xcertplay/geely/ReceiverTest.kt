@@ -1,9 +1,8 @@
 package com.shilapi.xcertplay.geely
 
 import android.os.Looper
-import android.widget.RadioButton
-import android.widget.EditText
 import org.junit.Assert.*
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -19,28 +18,30 @@ import java.util.concurrent.TimeUnit
 class ReceiverTest {
     private fun field(activity:GeelyActivity, name:String):Any? = GeelyActivity::class.java.getDeclaredField(name).apply { isAccessible=true }.get(activity)
     private fun invoke(activity:GeelyActivity,name:String) = GeelyActivity::class.java.getDeclaredMethod(name).apply { isAccessible=true }.invoke(activity)
-    @Test fun setupKeepsPrimaryAndStatusInsideWindowAcrossWidthsAndLargeFonts() {
-        for(font in listOf(1f,1.35f)) {
-            val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
-            val activity=lifecycle.get()
-            activity.resources.configuration.fontScale=font
-            val page=field(activity,"setupPage") as android.view.View
-            val primary=field(activity,"primary") as android.view.View
-            val status=field(activity,"status") as android.view.View
-            for((width,height) in listOf(1280 to 600,1024 to 480,640 to 360,480 to 600)) {
-                repeat(3) {
-                    page.measure(android.view.View.MeasureSpec.makeMeasureSpec(width,android.view.View.MeasureSpec.EXACTLY),android.view.View.MeasureSpec.makeMeasureSpec(height,android.view.View.MeasureSpec.EXACTLY))
-                    page.layout(0,0,width,height)
-                }
-                for(view in listOf(primary,status)) {
-                    val bounds=android.graphics.Rect(0,0,view.width,view.height)
-                    (page as android.view.ViewGroup).offsetDescendantRectToMyCoords(view,bounds)
-                    assertTrue("$width x $height font=$font: $bounds",bounds.top>=0 && bounds.bottom<=height && bounds.left>=0 && bounds.right<=width)
-                    assertTrue(view.height>0 && view.width>0)
-                }
-            }
-            lifecycle.pause().stop().destroy()
-        }
+    @Test fun compactAndLargeFontWindowsUseScrollableSingleColumn() {
+        assertTrue(ReceiverLayoutPolicy.twoColumns(1280f,1f))
+        assertTrue(ReceiverLayoutPolicy.twoColumns(1024f,1.35f))
+        assertFalse(ReceiverLayoutPolicy.twoColumns(640f,1f))
+        assertFalse(ReceiverLayoutPolicy.twoColumns(900f,1.35f))
+        assertFalse(ReceiverLayoutPolicy.twoColumns(480f,1f))
+    }
+    @Test fun backDismissesDialogBeforeSettingsAndNeverChangesConnectionState() {
+        val ui=ReceiverUiState();ui.busy=true;ui.settingsOpen=true;ui.dialog=ReceiverDialog.AUDIO
+        assertTrue(ui.dismissTopLayer());assertNull(ui.dialog);assertTrue(ui.settingsOpen)
+        assertTrue(ui.dismissTopLayer());assertFalse(ui.settingsOpen);assertTrue(ui.busy)
+        assertFalse(ui.dismissTopLayer())
+    }
+    @Test fun appearancePersistsSeparatelyWithoutTouchingPairingsOrPlayback() = kotlinx.coroutines.runBlocking {
+        val app=org.robolectric.RuntimeEnvironment.getApplication()
+        val connection=ReceiverStore(app)
+        connection.prefs.edit().putInt("video_fps",60).putString("phone","test-address").commit()
+        val appearance=ReceiverAppearance(app)
+        appearance.save(ReceiverThemeMode.DARK)
+        assertEquals(ReceiverThemeMode.DARK,appearance.mode.first())
+        assertEquals(60,connection.prefs.getInt("video_fps",30))
+        assertEquals("test-address",connection.prefs.getString("phone",null))
+        appearance.save(ReceiverThemeMode.SYSTEM)
+        assertEquals(ReceiverThemeMode.SYSTEM,appearance.mode.first())
     }
 
     @Test fun playbackChoicesSurviveReopenAndReachProtocolWithoutClaiming120Fps() {
@@ -49,8 +50,8 @@ class ReceiverTest {
         store.prefs.edit().putInt("media_buffer_ms",150).putInt("video_fps",60).commit()
         lifecycle.pause().stop().destroy()
         lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
-        assertTrue((field(lifecycle.get(),"audioButton") as android.widget.Button).text.contains("150ms"))
-        assertTrue((field(lifecycle.get(),"fpsButton") as android.widget.Button).text.contains("60"))
+        assertEquals(150,lifecycle.get().ui.bufferMs)
+        assertEquals(60,lifecycle.get().ui.fps)
         val config=receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1280,720,60)
         assertEquals(60,config.main.fps)
         val advertised=com.shilapi.xcertplay.airplay.AirPlayInfoPlist.build(config)["displays"] as List<*>
@@ -77,22 +78,20 @@ class ReceiverTest {
     }
     @Test fun switchingModesKeepsSeparateCredentialsAndOnlyTwoModes() {
         val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
-        val ssid=field(activity,"ssid") as EditText;val password=field(activity,"password") as EditText
-        ssid.setText("CarAP");password.setText("hotspot-pass")
-        (field(activity,"modeLan") as RadioButton).isChecked=true
-        ssid.setText("Router");password.setText("router-pass")
-        (field(activity,"modeHotspot") as RadioButton).isChecked=true
-        assertEquals("CarAP",ssid.text.toString());assertEquals("hotspot-pass",password.text.toString())
-        (field(activity,"modeLan") as RadioButton).isChecked=true
-        assertEquals("Router",ssid.text.toString());assertEquals("router-pass",password.text.toString())
+        activity.ui.ssid="CarAP";activity.ui.password="hotspot-pass"
+        activity.switchMode(ConnectionMode.SAME_LAN)
+        activity.ui.ssid="Router";activity.ui.password="router-pass"
+        activity.switchMode(ConnectionMode.CAR_HOTSPOT)
+        assertEquals("CarAP",activity.ui.ssid);assertEquals("hotspot-pass",activity.ui.password)
+        activity.switchMode(ConnectionMode.SAME_LAN)
+        assertEquals("Router",activity.ui.ssid);assertEquals("router-pass",activity.ui.password)
         assertEquals(2,ConnectionMode.entries.size)
         lifecycle.pause().stop().destroy()
     }
     @Test fun duplicateConnectAndCancellationCannotPublishStaleController() {
         val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
-        (field(activity,"modeLan") as RadioButton).isChecked=true
-        (field(activity,"ssid") as EditText).setText("Router")
-        (field(activity,"password") as EditText).setText("")
+        activity.switchMode(ConnectionMode.SAME_LAN)
+        activity.ui.ssid="Router";activity.ui.password=""
         (field(activity,"video") as android.view.View).layout(0,0,1280,720)
         val worker=field(activity,"worker") as ExecutorService
         val gate=CountDownLatch(1);worker.execute { gate.await(5,TimeUnit.SECONDS) }

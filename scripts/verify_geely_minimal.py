@@ -18,7 +18,11 @@ assert 'android.permission.RECORD_AUDIO' in badging
 with zipfile.ZipFile(a.apk) as z:
  for name in ('identity.pk8','certificate.p7b'):
   assert z.read('assets/offline-mfi/'+name)==(a.auth/'offline-mfi'/name).read_bytes()
- assert not any(n.startswith('lib/') for n in z.namelist()),'Unexpected native modules'
+ native=[n for n in z.namelist() if n.startswith('lib/') and n.endswith('.so')]
+ allowed={'libandroidx.graphics.path.so','libdatastore_shared_counter.so'}
+ assert all(Path(n).name in allowed for n in native),'Unexpected native modules'
+ # Compose path rendering and DataStore ship official native helpers; no codec or vehicle libraries.
+ assert not any('codec' in n.lower() or 'mfi' in n.lower() for n in native)
 mapping=a.mapping.read_text()
 retained=[]
 for line in mapping.splitlines():

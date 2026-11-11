@@ -1,29 +1,23 @@
 package com.shilapi.xcertplay.geely
 
 import android.Manifest
-import android.app.Activity
-import android.app.AlertDialog
 import android.bluetooth.BluetoothManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.text.InputType
-import android.view.Gravity
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
+import android.widget.FrameLayout
 import android.view.WindowManager
-import android.widget.*
 import com.shilapi.xcertplay.airplay.*
 import com.shilapi.xcertplay.media.AndroidMediaSink
 import com.shilapi.xcertplay.orchestration.*
@@ -32,31 +26,12 @@ import java.io.File
 import java.util.concurrent.Executors
 
 /** Foreground-only receiver: one Activity, one explicit attempt, no services or boot receivers. */
-class GeelyActivity : Activity() {
+class GeelyActivity : androidx.activity.ComponentActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private lateinit var store: ReceiverStore
     private lateinit var root: FrameLayout
-    private lateinit var form: LinearLayout
-    private lateinit var setupPage: LinearLayout
-    private lateinit var body: LinearLayout
-    private lateinit var modes: RadioGroup
-    private lateinit var footer: LinearLayout
-    private lateinit var configurationScroll: ScrollView
-    private lateinit var scrollingContent: LinearLayout
-    private var wideLayout: Boolean? = null
-    private lateinit var status: TextView
-    private lateinit var primary: Button
-    private lateinit var modeHotspot: RadioButton
-    private lateinit var modeLan: RadioButton
-    private lateinit var ssid: EditText
-    private lateinit var password: EditText
-    private lateinit var iface: EditText
-    private lateinit var help: TextView
-    private lateinit var phoneButton: Button
-    private lateinit var audioButton: Button
-    private lateinit var fpsButton: Button
-    private lateinit var disconnect: Button
+    internal val ui = ReceiverUiState()
     private lateinit var video: SurfaceView
     private var mode = ConnectionMode.CAR_HOTSPOT
     private var phone: String? = null
@@ -78,22 +53,18 @@ class GeelyActivity : Activity() {
     private var timeout: Runnable? = null
     private var secret = ""
     private var message = "未连接。请先按说明连接网络并配对蓝牙。"
-    private val panelColor = Color.rgb(23,44,50)
-    private val inkColor = Color.rgb(242,244,239)
-    private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
-    private fun text(value: String, size: Float = 18f) = TextView(this).apply { text=value; textSize=size; setTextColor(inkColor) }
-    private fun button(value: String, action: () -> Unit) = Button(this).apply {
-        text=value; isAllCaps=false; textSize=18f; minHeight=dp(56); setTextColor(inkColor); backgroundTintList=android.content.res.ColorStateList.valueOf(Color.rgb(36,61,67)); setOnClickListener { action() }
-    }
-    private fun field(label: String, hidden: Boolean = false) = EditText(this).apply {
-        hint=label; textSize=20f; setTextColor(inkColor); setHintTextColor(Color.LTGRAY)
-        minHeight=dp(56); isSingleLine=true; inputType=if(hidden) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_CLASS_TEXT
-        importantForAutofill=View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
-        isSaveEnabled=false
-    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store=ReceiverStore(this)
+        window.setDecorFitsSystemWindows(false)
+        window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.TRANSPARENT
+        onBackPressedDispatcher.addCallback(this,object:androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if(ui.dismissTopLayer()) return
+                if(busy || connected) endAttempt("已返回连接页，可重新连接。")
+                else { isEnabled=false;onBackPressedDispatcher.onBackPressed() }
+            }
+        })
         mode=runCatching { ConnectionMode.valueOf(store.prefs.getString("mode", "CAR_HOTSPOT")!!) }.getOrDefault(ConnectionMode.CAR_HOTSPOT)
         phone=store.prefs.getString("phone", null); phoneName=store.prefs.getString("phone_name", phoneName)!!
         buildUi()
@@ -123,113 +94,51 @@ class GeelyActivity : Activity() {
             }
             true
         }
-        setupPage=LinearLayout(this).apply {
-            orientation=LinearLayout.VERTICAL; setBackgroundColor(panelColor)
-            setPadding(dp(20),dp(8),dp(20),dp(12))
+        val compose=androidx.compose.ui.platform.ComposeView(this).apply {
+            setContent {
+                ReceiverApp(ui,
+                    onMode={ switchMode(it) },
+                    onPrimary={ if(busy) endAttempt("已取消连接") else connect() },
+                    onDisconnect={ endAttempt("已断开，可重新连接") },
+                    onBluetooth={ saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
+                    onPhone={ loadPhoneChoices() },
+                    onPhoneSelected={ address,name ->
+                        if(!busy && !stopping) {
+                            phone=address;phoneName=name;ui.phoneName=name
+                            store.prefs.edit().putString("phone",phone).putString("phone_name",phoneName).apply()
+                        }
+                    },
+                    onPlayback={ audio,value ->
+                        if(!busy && !stopping) {
+                            store.prefs.edit().putInt(if(audio) "media_buffer_ms" else "video_fps",value).apply()
+                            refreshPlaybackLabels()
+                        }
+                    },
+                    onLogs={ loadLogs() })
+            }
         }
-        root.addView(setupPage,FrameLayout.LayoutParams(-1,-1))
-        val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
-        header.addView(text("DiPlay Geely",26f).apply { setTypeface(null,Typeface.BOLD) },LinearLayout.LayoutParams(0,-2,1f))
-        header.addView(button("蓝牙配对") { saveInputs(); startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) })
-        header.addView(button("诊断") { showLogs() })
-        setupPage.addView(header)
-        body=LinearLayout(this)
-        setupPage.addView(body,LinearLayout.LayoutParams(-1,0,1f))
-        modes=RadioGroup(this)
-        modeHotspot=RadioButton(this).apply { id=View.generateViewId();text="车机热点";textSize=20f;setTextColor(inkColor);minHeight=dp(64) }
-        modeLan=RadioButton(this).apply { id=View.generateViewId();text="同一局域网";textSize=20f;setTextColor(inkColor);minHeight=dp(64) }
-        modes.addView(modeHotspot);modes.addView(modeLan)
-        body.addView(modes)
-        configurationScroll=ScrollView(this).apply { isFillViewport=true }
-        scrollingContent=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
-        configurationScroll.addView(scrollingContent)
-        form=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(12)) }
-        scrollingContent.addView(form);body.addView(configurationScroll)
-        help=text("",16f).apply { setTextColor(Color.rgb(167,186,182));setPadding(0,0,0,dp(12)) };form.addView(help)
-        ssid=field("热点或 Wi-Fi 名称");password=field("开放网络可留空",true);iface=field("网络接口，例如 wlan0")
-        form.addView(text("网络名称",16f));form.addView(ssid,LinearLayout.LayoutParams(-1,-2))
-        form.addView(text("网络密码",16f).apply { setPadding(0,dp(8),0,0) });form.addView(password,LinearLayout.LayoutParams(-1,-2))
-        val options=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL;visibility=View.GONE }
-        form.addView(button("连接选项") { options.visibility=if(options.visibility==View.VISIBLE) View.GONE else View.VISIBLE })
-        options.addView(text("热点网络接口",16f));options.addView(iface)
-        phoneButton=button(phoneName) { choosePhone() };options.addView(phoneButton)
-        audioButton=button("") { choosePlaybackSetting(true) };options.addView(audioButton)
-        fpsButton=button("") { choosePlaybackSetting(false) };options.addView(fpsButton)
-        options.addView(text("下次连接生效。缓冲越低越易断音；帧率越高负载越大。120 帧暂不支持。",16f))
-        form.addView(options);refreshPlaybackLabels()
-        footer=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(8),0,0) }
-        status=text(message,16f).apply {
-            maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END
-            accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE
-            setOnClickListener { showLogs() }
-        }
-        footer.addView(status)
-        primary=button("连接 CarPlay") { if(busy) endAttempt("已取消连接") else connect() }.apply {
-            backgroundTintList=android.content.res.ColorStateList.valueOf(Color.rgb(201,222,176));setTextColor(panelColor)
-        }
-        footer.addView(primary);setupPage.addView(footer)
-        // Measure the actual inset-adjusted window, including keyboard and split-screen changes.
-        setupPage.addOnLayoutChangeListener { _,l,t,r,b,_,_,_,_ -> adaptLayout(r-l,b-t) }
-        disconnect=button("断开 CarPlay") { endAttempt("已断开，可重新连接") }.apply { visibility=View.GONE;alpha=.9f }
-        root.addView(disconnect,FrameLayout.LayoutParams(dp(164),dp(56),Gravity.TOP or Gravity.END))
-        setContentView(root)
-        modes.check(if(mode==ConnectionMode.CAR_HOTSPOT) modeHotspot.id else modeLan.id)
-        modes.setOnCheckedChangeListener { _,id ->
-            saveInputs(); mode=if(id==modeHotspot.id) ConnectionMode.CAR_HOTSPOT else ConnectionMode.SAME_LAN
-            store.prefs.edit().putString("mode",mode.name).apply();loadInputs()
-        }
-        loadInputs();applyState()
+        root.addView(compose,FrameLayout.LayoutParams(-1,-1));setContentView(root)
+        loadInputs();refreshPlaybackLabels();applyState()
     }
-    private fun adaptLayout(width: Int, height: Int) {
-        if(width<=0 || height<=0) return
-        // Font scale affects the breakpoint: never squeeze large text into a fixed two-column layout.
-        val effectiveWidth=width/resources.displayMetrics.density/resources.configuration.fontScale.coerceAtLeast(1f)
-        val wide=effectiveWidth>=720f
-        if(wideLayout==wide) return
-        wideLayout=wide
-        body.orientation=if(wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        modes.orientation=if(wide) RadioGroup.VERTICAL else RadioGroup.HORIZONTAL
-        (modes.parent as android.view.ViewGroup).removeView(modes)
-        if(wide) body.addView(modes,0) else scrollingContent.addView(modes,0)
-        modes.layoutParams=LinearLayout.LayoutParams(if(wide) dp(208) else -1, -2)
-        listOf(modeHotspot,modeLan).forEach {
-            it.layoutParams=RadioGroup.LayoutParams(if(wide) -1 else 0,-2,if(wide) 0f else 1f)
-        }
-        configurationScroll.layoutParams=if(wide) LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f)
-        footer.orientation=if(wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        status.layoutParams=if(wide) LinearLayout.LayoutParams(0,-2,1f) else LinearLayout.LayoutParams(-1,-2)
-        primary.layoutParams=LinearLayout.LayoutParams(if(wide) dp(224) else -1,-2)
+    internal fun switchMode(next:ConnectionMode) {
+        if(busy || stopping || next==mode) return
+        saveInputs();mode=next;store.prefs.edit().putString("mode",mode.name).apply();loadInputs()
     }
     private fun refreshPlaybackLabels() {
-        val buffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
-        val fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
-        audioButton.text="音频缓冲：${buffer}ms"
-        fpsButton.text="CarPlay 帧率：${fps} 帧"
-    }
-    private fun choosePlaybackSetting(audio: Boolean) {
-        if(busy || connected || stopping) return
-        val values=if(audio) ReceiverPlaybackSettings.bufferChoices else ReceiverPlaybackSettings.fpsChoices
-        val key=if(audio) "media_buffer_ms" else "video_fps"
-        val current=store.prefs.getInt(key,if(audio) 200 else 30)
-        val labels=values.map { value ->
-            if(audio) "${value}ms" + when(value) { 100 -> "（更低延迟，易断音）";200 -> "（当前默认）";300 -> "（原版默认）";1000 -> "（更稳，延迟较高）";else -> "" }
-            else "$value 帧" + if(value==30) "（负载较低）" else "（更流畅，负载较高）"
-        }.toTypedArray()
-        AlertDialog.Builder(this).setTitle(if(audio) "音频缓冲 · 下次连接生效" else "CarPlay 帧率 · 下次连接生效")
-            .setSingleChoiceItems(labels,values.indexOf(current).coerceAtLeast(0)) { dialog,index ->
-                if(!busy && !connected && !stopping) {
-                    store.prefs.edit().putInt(key,values[index]).apply();refreshPlaybackLabels()
-                }
-                dialog.dismiss()
-            }.setNegativeButton("取消",null).show()
+        ui.bufferMs=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
+        ui.fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
     }
     private fun key(name: String) = "${mode.name}_$name"
     private fun loadInputs() {
-        ssid.setText(store.prefs.getString(key("ssid"),""));password.setText(store.prefs.getString(key("password"),""));iface.setText(store.prefs.getString("interface","wlan0"))
-        help.text=if(mode==ConnectionMode.CAR_HOTSPOT) "开启原车热点，让 iPhone 加入并完成蓝牙配对。" else "两台设备加入同一 Wi-Fi 并配对蓝牙；网络需允许设备互通和组播。"
-        iface.isEnabled=mode==ConnectionMode.CAR_HOTSPOT
+        ui.mode=mode;ui.ssid=store.prefs.getString(key("ssid"),"").orEmpty()
+        ui.password=store.prefs.getString(key("password"),"").orEmpty()
+        ui.networkInterface=store.prefs.getString("interface","wlan0").orEmpty()
+        ui.phoneName=phoneName
     }
-    private fun saveInputs() { if(::ssid.isInitialized) store.prefs.edit().putString(key("ssid"),ssid.text.toString()).putString(key("password"),password.text.toString()).putString("interface",iface.text.toString().trim()).apply() }
+    private fun saveInputs() {
+        store.prefs.edit().putString(key("ssid"),ui.ssid).putString(key("password"),ui.password)
+            .putString("interface",ui.networkInterface.trim()).apply()
+    }
     private fun missingPermissions(): Array<String> = (listOf(Manifest.permission.RECORD_AUDIO) + if(Build.VERSION.SDK_INT>=31) listOf(Manifest.permission.BLUETOOTH_CONNECT) else emptyList()).filter { checkSelfPermission(it)!=PackageManager.PERMISSION_GRANTED }.toTypedArray()
     private fun requestNecessaryPermissions(): Boolean {
         val missing=missingPermissions()
@@ -244,16 +153,13 @@ class GeelyActivity : Activity() {
             if(missingPermissions().isEmpty()) connect() else update(if(Manifest.permission.RECORD_AUDIO in missingPermissions()) "麦克风权限未允许，无法提供完整 CarPlay 音频能力。请允许麦克风权限后重试。" else "蓝牙权限被拒绝。请在系统应用权限中允许附近设备，然后重试。")
         }
     }
-    private fun choosePhone() {
+    private fun loadPhoneChoices() {
         try {
-        if(missingPermissions().isNotEmpty()) { update("请先点击连接并允许所需权限，再选择手机。");return }
-        val devices=runCatching { getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.toList().orEmpty() }.getOrDefault(emptyList())
-        if(devices.isEmpty()) { update("没有已配对手机，请先点击蓝牙配对。");return }
-        val labels=arrayOf("自动选择")+devices.map { it.name ?: "已配对设备" }.toTypedArray()
-        AlertDialog.Builder(this).setTitle("选择已配对 iPhone").setItems(labels) { _,n ->
-            phone=if(n==0) null else devices[n-1].address;phoneName=if(n==0) "自动选择已配对的 iPhone" else labels[n]
-            store.prefs.edit().putString("phone",phone).putString("phone_name",phoneName).apply();phoneButton.text=phoneName
-        }.show()
+            if(missingPermissions().isNotEmpty()) { update("请先点击连接并允许所需权限，再选择手机。");return }
+            val devices=getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.toList().orEmpty()
+            if(devices.isEmpty()) { update("没有已配对手机，请先在设置中打开蓝牙配对。");return }
+            ui.phoneChoices=listOf(null to "自动选择已配对的 iPhone")+devices.map { it.address to (it.name ?: "已配对设备") }
+            ui.dialog=ReceiverDialog.PHONE
         } catch (_: SecurityException) { update("蓝牙权限已变化，请允许权限后重试。") }
     }
     private fun connect() {
@@ -263,7 +169,7 @@ class GeelyActivity : Activity() {
         if (!ReceiverSessionGate.acquire(lease)) { update("上一连接仍在释放，请稍后重试。");return }
         leaseToken=lease
         saveInputs()
-        val config=ReceiverConfig(mode,ssid.text.toString(),password.text.toString(),iface.text.toString().trim(),phone)
+        val config=ReceiverConfig(mode,ui.ssid,ui.password,ui.networkInterface.trim(),phone)
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         secret=config.password
@@ -366,14 +272,10 @@ class GeelyActivity : Activity() {
         }
     }
     private fun applyState() {
-        setupPage.visibility=if(connected) View.GONE else View.VISIBLE
-        disconnect.visibility=if(connected) View.VISIBLE else View.GONE
-        primary.text=if(stopping) "正在结束连接…" else if(busy) "取消连接" else "连接 CarPlay"
-        primary.isEnabled=!stopping
-        listOf(modeHotspot,modeLan,ssid,password,iface,phoneButton,audioButton,fpsButton).forEach { it.isEnabled=!busy && !stopping }
-        if(mode==ConnectionMode.SAME_LAN) iface.isEnabled=false
+        ui.busy=busy;ui.stopping=stopping;ui.connected=connected
+        if(connected) { ui.settingsOpen=false;ui.dialog=null }
     }
-    private fun update(value:String) { message=value;status.text=value;log(value) }
+    private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
     @Synchronized private fun log(value:String) {
         if(destroyed) return
         val safe=if(secret.isNotEmpty()) value.replace(secret,"[redacted]") else value
@@ -383,14 +285,10 @@ class GeelyActivity : Activity() {
             file.appendText("${System.currentTimeMillis()} "+safe.take(2000)+"\n")
         }
     }
-    private fun showLogs() {
-        val content=runCatching { File(filesDir,"connection.log").readText().takeLast(20_000) }.getOrDefault("尚无连接记录")
-        val view=text(content,14f).apply { setPadding(dp(16),dp(12),dp(16),dp(12));setTextIsSelectable(true) }
-        val scroll=ScrollView(this);scroll.addView(view)
-        AlertDialog.Builder(this).setTitle("本地连接诊断").setView(scroll).setPositiveButton("关闭",null).show()
+    private fun loadLogs() {
+        ui.logs=runCatching { File(filesDir,"connection.log").readText().takeLast(20_000) }.getOrDefault("尚无连接记录")
+        ui.dialog=ReceiverDialog.LOGS
     }
-    @Deprecated("Uses Activity back for Android 11 target")
-    override fun onBackPressed() { if(busy || connected) endAttempt("已返回连接页，可重新连接。") else super.onBackPressed() }
     override fun onConfigurationChanged(config:Configuration) {
         super.onConfigurationChanged(config)
         video.post {
@@ -400,7 +298,7 @@ class GeelyActivity : Activity() {
         }
     }
     override fun onStart() { super.onStart();foreground=true }
-    override fun onStop() { foreground=false;if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
+    override fun onStop() { saveInputs();foreground=false;if(busy || connected) endAttempt("应用已离开前台，连接已结束。重新打开后可连接。");super.onStop() }
     override fun onDestroy() {
         saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
