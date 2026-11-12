@@ -76,6 +76,20 @@ class ReceiverTest {
         activity.disconnectFromNotification();(field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
     }
+    @Test fun displayPreferencesSaveForNextConnectionWithoutEndingOrResizingRunningSession() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
+        set("connected",true);set("busy",true);set("configuredWidth",1280);set("configuredHeight",720)
+        invoke(activity,"applyState");val generation=field(activity,"generation")
+        activity.saveDisplayPreference(true,125);activity.saveDisplayPreference(false,85)
+        assertEquals(generation,field(activity,"generation"));assertTrue(activity.ui.connected)
+        assertEquals(1280,field(activity,"configuredWidth"));assertEquals(720,field(activity,"configuredHeight"))
+        assertEquals(125,activity.ui.quality);assertEquals(85,activity.ui.carPlaySize);assertTrue(activity.ui.reconnectNeeded)
+        val prefs=(field(activity,"store") as ReceiverStore).prefs
+        assertEquals(125,prefs.getInt("display_quality",0));assertEquals(85,prefs.getInt("carplay_ui_size",0))
+        activity.disconnectFromNotification();(field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
+    }
     @Test fun bundledGeelyHomeIconIsAdvertisedAsRealPngInsteadOfEmptyOemEntry() {
         val app=org.robolectric.RuntimeEnvironment.getApplication()
         val icons=receiverHomeIcons(app);assertEquals(1,icons.size)

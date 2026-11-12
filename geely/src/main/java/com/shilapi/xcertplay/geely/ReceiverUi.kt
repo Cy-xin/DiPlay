@@ -8,6 +8,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,7 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.launch
 
-internal enum class ReceiverDialog { AUDIO, FPS, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
+internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
     var audit:(String,String)->Unit={_,_->}
@@ -52,6 +53,12 @@ internal class ReceiverUiState {
     var phoneName by mutableStateOf("自动选择已配对的 iPhone")
     var bufferMs by mutableIntStateOf(200)
     var fps by mutableIntStateOf(30)
+    var quality by mutableIntStateOf(100)
+    var carPlaySize by mutableIntStateOf(100)
+    var displayApplied by mutableStateOf("")
+    var timingReport by mutableStateOf("")
+    var reconnectNeeded by mutableStateOf(false)
+    fun markReconnectNeeded() {reconnectNeeded=true}
     var busy by mutableStateOf(false)
     var stopping by mutableStateOf(false)
     var connected by mutableStateOf(false)
@@ -63,6 +70,7 @@ internal class ReceiverUiState {
     var logs by mutableStateOf("")
     var notice by mutableStateOf("")
     val editable get()=!busy && !stopping && !connected
+    val displayEditable get()=!stopping && (!busy || connected)
     fun dismissTopLayer():Boolean {
         if(dialog!=null) { audit("dialog_back","dialog=$dialog");dialog=if(dialog==ReceiverDialog.LOGS || dialog==ReceiverDialog.PAIR_UPLOAD) ReceiverDialog.DIAGNOSTICS else null;return true }
         if(settingsOpen) {audit("settings_back","");settingsOpen=false;return true }
@@ -75,7 +83,7 @@ internal class ReceiverUiState {
 @Composable internal fun ReceiverApp(
     ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
-    onPlayback:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
+    onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
 ) {
     val context=LocalContext.current
     val appearance=remember { ReceiverAppearance(context) }
@@ -112,7 +120,7 @@ internal class ReceiverUiState {
                     }
                 }
             }
-            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onUpload,onPairUpload)
+            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onUpload,onPairUpload)
         }
     }
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
@@ -275,16 +283,21 @@ internal class ReceiverUiState {
 @Composable private fun SettingsPanel(ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,onFullscreen:(Boolean)->Unit,onTheme:(ReceiverThemeMode)->Unit) {
     var query by rememberSaveable {mutableStateOf("")}
     var settingsGroup by rememberSaveable {mutableIntStateOf(1)}
+    val keyboard=LocalSoftwareKeyboardController.current
+    val focus=LocalFocusManager.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide=maxWidth>=840.dp
         GlassSurface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
                     Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=24.sp,fontWeight=FontWeight.Bold)
-                    if(wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.width(300.dp),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
+                    if(wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.width(300.dp),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
+                        keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide();focus.clearFocus()}))
                     TextButton({ui.audit("settings_close","");ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
                 }
-                if(!wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control)
+                if(!wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
+                        keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide();focus.clearFocus()}))
+                if(ui.reconnectNeeded) Text(tr("画面设置已保存，下次连接生效。","Display settings saved. Applies next connection."),fontSize=13.sp,color=MaterialTheme.colorScheme.primary)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
                     Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
                 Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
@@ -308,6 +321,9 @@ internal class ReceiverUiState {
                         found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
                     }
                     if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
+                    if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
+                    if(matches(playback,"界面大小","图标","缩放","size","scale")) {found=true;SettingsRow(tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"),"${ui.carPlaySize}% · "+tr("下次连接生效","Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.SIZE}}
+                    if(matches(playback,"画面信息","display" ) && ui.displayApplied.isNotBlank()) {found=true;Text(ui.displayApplied,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     if(matches(appearance,"主题","theme","浅色","深色","系统")) {
                         found=true;section(appearance)
                         ReceiverThemeMode.entries.forEach { mode ->
@@ -353,6 +369,8 @@ internal class ReceiverUiState {
         PageHeading(tr("诊断","Diagnostics"),tr("记录问题，方便下次排查","Record an issue for troubleshooting"))
         GlassSurface(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                if(ui.timingReport.isNotBlank()) SelectionContainer {Text(ReceiverConnectionTiming.describe(ui.timingReport),fontSize=14.sp)}
+                if(ui.displayApplied.isNotBlank()) Text(ui.displayApplied,fontSize=13.sp)
                 Text(tr("持续记录本应用操作与连接诊断，保留最近7天、最多约8MB；不含密码、密钥、输入内容、录音或画面。只在你点击后上传。",
                     "App operations and connection diagnostics: up to 7 days / about 8MiB. No credentials, input content, recordings or frames. Upload only when requested."),fontSize=14.sp)
                 OutlinedTextField(ui.issue,{ui.audit("issue_note_edited","");ui.issue=it.take(1000)},Modifier.fillMaxWidth(),label={Text(tr("问题说明（可选）","Issue notes (optional)"))},enabled=!ui.uploadBusy,minLines=2,maxLines=3)
@@ -371,7 +389,7 @@ internal class ReceiverUiState {
     }
 }
 
-@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
+@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
     val dialog=ui.dialog ?: return
     if(dialog==ReceiverDialog.DIAGNOSTICS) return
     if(dialog==ReceiverDialog.PAIR_UPLOAD) {
@@ -390,6 +408,24 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
             text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
+        return
+    }
+    if(dialog==ReceiverDialog.QUALITY || dialog==ReceiverDialog.SIZE) {
+        val quality=dialog==ReceiverDialog.QUALITY
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(if(quality) tr("画面清晰度（实验性）","Picture detail (experimental)") else tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"))},text={
+            Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
+                Text(if(quality) tr("下次连接生效。高清请求更大画布，增加解码负载；硬件不支持时自动回退。屏幕本身的像素不会增加。","Applies next connection. HD requests a larger canvas with higher load; unsupported hardware falls back. Panel pixels do not increase.")
+                    else tr("下次连接生效。沿用原版画布缩放：小界面容纳更多内容，也会改变协商分辨率；实际布局由 iPhone 决定。","Applies next connection. Uses the original canvas scaling; smaller controls fit more content and change the negotiated resolution. iPhone determines the layout."),fontSize=14.sp)
+                val choices=if(quality) ReceiverDisplaySettings.qualityChoices else ReceiverDisplaySettings.sizeChoices
+                choices.forEach {value ->
+                    val selected=value==if(quality) ui.quality else ui.carPlaySize
+                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {onDisplay(quality,value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected,null,enabled=ui.displayEditable)
+                        Text(if(quality) {if(value==100) tr("标准 · 匹配屏幕","Standard · match screen") else tr("高清 · 125% 画布","HD · 125% canvas")} else when(value) {85->tr("小 · 更多内容","Small · more content");115->tr("大 · 更易阅读","Large · easier reading");else->tr("标准","Standard")},fontSize=16.sp)
+                    }
+                }
+            }
+        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("取消","Cancel"))}})
         return
     }
     val title=when(dialog) { ReceiverDialog.AUDIO->tr("音频缓冲","Audio buffer");ReceiverDialog.FPS->tr("CarPlay 帧率","CarPlay frame rate");else->tr("已配对 iPhone","Paired iPhone") }

@@ -1357,6 +1357,12 @@ class CarPlayController(
         val iPhones = bonded.filter { device ->
             device.name?.contains("iPhone", ignoreCase = true) == true
         }
+        // With one bonded iPhone the upstream policy ultimately chooses that same phone.
+        // Avoid waiting for connection/profile queries that cannot change this selection.
+        if (iPhones.size == 1) {
+            debugLog("wireless single paired iPhone selected; profile lookup skipped")
+            return iPhones.single()
+        }
         val directlyConnectedIPhones = iPhones.filter(::isBluetoothDeviceConnected)
         Log.i(
             IphoneCarPlayConfiguration.TAG,

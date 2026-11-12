@@ -55,6 +55,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var pendingPermissions = false
     private var timeout: Runnable? = null
     private var secret = ""
+    private val connectionTiming=ReceiverConnectionTiming(android.os.SystemClock::elapsedRealtime)
     private var message = "未连接。请先按说明连接网络并配对蓝牙。"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -68,6 +69,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("lifecycle","activity_create")
         ui.uploadPaired=uploader.enrolled;ui.lastReport=uploader.lastReport
         store=ReceiverStore(this)
+        ui.timingReport=store.prefs.getString("last_connection_timing","").orEmpty()
+        ui.displayApplied=store.prefs.getString("last_display_summary","").orEmpty()
         window.setDecorFitsSystemWindows(false)
         window.statusBarColor=Color.TRANSPARENT;window.navigationBarColor=Color.TRANSPARENT
         onBackPressedDispatcher.addCallback(this,object:androidx.activity.OnBackPressedCallback(true) {
@@ -131,6 +134,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                             refreshPlaybackLabels()
                         }
                     },
+                    onDisplay=::saveDisplayPreference,
                     onFullscreen={ hidden ->
                         if(ui.editable) {
                             journal.event("operation","system_bars_changed","hidden=$hidden");ui.hideSystemBars=hidden
@@ -149,9 +153,18 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(busy || stopping || next==mode) return
         saveInputs();mode=next;store.prefs.edit().putString("mode",mode.name).apply();loadInputs()
     }
+    internal fun saveDisplayPreference(quality:Boolean,value:Int) {
+        if(!ui.displayEditable) return
+        val saved=if(quality) ReceiverDisplaySettings.quality(value) else ReceiverDisplaySettings.size(value)
+        store.prefs.edit().putInt(if(quality) "display_quality" else "carplay_ui_size",saved).apply()
+        ui.markReconnectNeeded();refreshPlaybackLabels()
+        journal.event("operation","display_preference_saved","setting=${if(quality) "quality" else "size"} value=$saved next_connection=true")
+    }
     private fun refreshPlaybackLabels() {
         ui.bufferMs=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         ui.fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
+        ui.quality=ReceiverDisplaySettings.quality(store.prefs.getInt("display_quality",100))
+        ui.carPlaySize=ReceiverDisplaySettings.size(store.prefs.getInt("carplay_ui_size",100))
     }
     private fun key(name: String) = "${mode.name}_$name"
     private fun loadInputs() {
@@ -202,10 +215,12 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val lease=Any()
         if (!ReceiverSessionGate.acquire(lease)) { update("上一连接仍在释放，请稍后重试。");return }
         leaseToken=lease
+        connectionTiming.start()
         saveInputs()
         val config=ReceiverConfig(mode,ui.ssid,ui.password,ui.networkInterface.trim(),phone)
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
+        val displayQuality=ui.quality;val displaySize=ui.carPlaySize
         secret=config.password
         val token=++generation
         busy=true;update("正在检查配置和认证资产…");applyState()
@@ -215,6 +230,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         timeout=Runnable { if(token==generation && busy && !connected) endAttempt("连接超时。请确认 iPhone 已加入网络、蓝牙已配对，并在手机上允许 CarPlay；局域网需关闭客户端隔离并允许组播，然后重试。") }.also { main.postDelayed(it,90_000) }
         val width=(video.width/2)*2;val height=(video.height/2)*2
         if(width<2 || height<2) {
+            finishTiming("failed")
             busy=false;ReceiverSessionGate.release(leaseToken);leaseToken=null
             timeout?.let(main::removeCallbacks);timeout=null
             stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
@@ -232,14 +248,19 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     manualHotspotSsid=config.ssid,manualHotspotPassphrase=config.password,manualHotspotInterface=config.networkInterface,
                     manualHotspotSecurity=if(config.password.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2,
                     existingWifiSsid=config.ssid,existingWifiPassphrase=config.password)
-                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext))
+                val display=ReceiverDisplaySettings.plan(width,height,videoFps,displayQuality,displaySize)
+                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=display.display)
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
-                        val renderer=AndroidMediaSink(videoWidth=width,videoHeight=height,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        ui.reconnectNeeded=false
+                        ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(display.fallback) "（设备能力限制，已回退）" else "")
+                        store.prefs.edit().putString("last_display_summary",ui.displayApplied).apply()
+                        journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback}")
+                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
-                        val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{ onStatus(token,it) })
+                        val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
                         controller=next;next.start()
                     } catch(e:Exception) { log("启动失败: "+e.javaClass.simpleName);endAttempt("无法启动连接：请检查本地诊断并重试。") }
@@ -253,9 +274,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
     }
     private fun listener(token:Int)=object:AirPlaySessionListener {
-        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session; update("CarPlay 会话已建立，正在等待画面…") } } }
+        override fun onTcpAccepted(event:AirPlayTcpAccepted) {main.post {if(token==generation && !destroyed) timingStage(ReceiverConnectionTiming.Stage.HANDSHAKE)}}
+        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
-            connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);update("CarPlay 已连接，画面已解码显示");applyState()
+            connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
         override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) endAttempt("iPhone 已断开，可重新连接。") } }
         override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) endAttempt("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。") } }
@@ -273,6 +295,15 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun onStatus(token:Int,state:CarPlayStatus) {
         if(token!=generation || destroyed || (connected && state !is CarPlayStatus.Failed)) return
         when(state) {
+            CarPlayStatus.DiscoveringMfi -> timingStage(ReceiverConnectionTiming.Stage.AUTH)
+            CarPlayStatus.MfiReady,CarPlayStatus.StartingHotspot -> timingStage(ReceiverConnectionTiming.Stage.NETWORK)
+            is CarPlayStatus.HotspotReady,CarPlayStatus.WaitingForPairedIphone -> timingStage(ReceiverConnectionTiming.Stage.SELECT_PHONE)
+            CarPlayStatus.AttachingNetwork -> timingStage(ReceiverConnectionTiming.Stage.DISCOVERY)
+            CarPlayStatus.ConnectingBluetooth -> timingStage(ReceiverConnectionTiming.Stage.BLUETOOTH)
+            CarPlayStatus.RunningWireless -> timingStage(ReceiverConnectionTiming.Stage.WAIT_PHONE)
+            else -> Unit
+        }
+        when(state) {
             is CarPlayStatus.Failed -> { log("连接失败: "+state.message);endAttempt("连接失败："+friendlyFailure(state.message)) }
             CarPlayStatus.WaitingForPairedIphone -> update("正在选择已配对 iPhone；请保持手机蓝牙开启。")
             CarPlayStatus.ConnectingBluetooth -> update("正在通过蓝牙完成首次认证与网络交接…")
@@ -281,6 +312,15 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             CarPlayStatus.MfiReady -> update("本地认证已就绪，正在检查网络…")
             else -> Unit
         }
+    }
+    private fun timingStage(stage:ReceiverConnectionTiming.Stage) {
+        if(connectionTiming.advance(stage)) journal.event("connection","timing_stage","stage=${stage.name} elapsedMs=${connectionTiming.elapsedMs()}")
+    }
+    private fun finishTiming(result:String) {
+        val report=connectionTiming.finish(result) ?: return
+        ui.timingReport=report
+        store.prefs.edit().putString("last_connection_timing",report).apply()
+        journal.event("connection","timing_result",report)
     }
     internal fun showReceiverHome() {
         if(!connected) return
@@ -309,6 +349,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun endAttempt(reason:String) {
         if(stopping) return
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
+        finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
         stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
         ui.showCarPlay=false
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
