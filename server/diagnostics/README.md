@@ -66,3 +66,15 @@ The owner approved the separate `8443` TLS listener. `install_ip_tls.py` deploye
 Certificate: `/etc/diplay-diagnostics/tls/fullchain.pem`; private key stays beside it with mode600. Renewal: `/etc/cron.d/diplay-diagnostics-certificate`, daily checks, about three-day renewal interval for the short-lived IP certificate. The deploy callback validates and reloads nginx. Check expiry and `/var/log/diplay-diagnostics-cert-renew.log` if uploads fail later. No TLS trust-all or cleartext fallback is allowed.
 
 Android emulator end-to-end enrollment/upload/private retrieval passed: report `9456bf27-849e-48eb-a50d-21572a200941`, 108 events. Physical Redmi and Geely upload verification remain pending. R8 mappings are retained locally only; no mapping or APK was uploaded to the server.
+
+## Pairing-code administration
+
+Open https://140.245.48.181:8443/diplay-diagnostics/v1/admin/ with the separate admin login. Select 1-4 devices and generate a 24-hour enrollment code. No APK update is needed; enrolled devices keep their upload credentials.
+
+Only the isolated 8443 nginx location exposes administration, using HTTPS Basic Auth and an IP request limit. Password hashes stay in /etc/diplay-diagnostics/admin.htpasswd, outside the repository. A private proxy token in /etc/diplay-diagnostics/admin-proxy.conf and /var/lib/diplay-diagnostics/admin_proxy.key prevents other existing upload routes from spoofing admin headers.
+
+Generation requires POST, matching Origin, a signed 20-minute CSRF token and a Secure/HttpOnly/SameSite=Strict cookie. Pages are non-cacheable and non-embeddable; no external resources are loaded. Codes are shown at generation only; SQLite stores hashes. Report retrieval remains SSH-only. Browsers may retain HTTP login credentials during a browsing session; close all related windows on shared devices.
+
+Original service and isolated nginx config are backed up in /opt/diplay-diagnostics/backups/admin-20261113. Roll back these two files, validate nginx, restart only the diagnostics service and reload nginx. Keep the live upload database. Existing 443 configuration is unchanged.
+
+Validation: all 9 Python intake/admin tests passed; required Android CI tasks passed. Public trusted HTTPS verified health 200, anonymous/forged admin 401, authenticated page 200, cross-origin generation 403, authenticated generation 200 and report retrieval 404. A real browser mobile emulation at 390 x 844 confirmed document width 390 with no horizontal overflow. Credentials and proxy secrets are not in source control.

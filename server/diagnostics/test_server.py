@@ -3,7 +3,7 @@ from pathlib import Path
 spec=importlib.util.spec_from_file_location('diag',Path(__file__).with_name('server.py'));m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class IntakeTest(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory();m.ROOT=Path(self.tmp.name);m.RATE.clear();m.init()
+  self.tmp=tempfile.TemporaryDirectory();m.ROOT=Path(self.tmp.name);m.RATE.clear();m.init();m.ADMIN_PROXY_TOKEN="test-admin-proxy"
   self.server=m.Server(('127.0.0.1',0),m.Handler);self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
   self.url='http://127.0.0.1:'+str(self.server.server_port)+m.BASE
  def tearDown(self):self.server.shutdown();self.server.server_close();self.tmp.cleanup()
@@ -49,4 +49,38 @@ class IntakeTest(unittest.TestCase):
   with m.db() as c:self.assertEqual(1,c.execute('SELECT errors FROM reports').fetchone()[0])
  def test_expired_pairing_code_cannot_register(self):
   status,_=self.request('/enroll',json.dumps({'code':'EXPIRED00000','installationId':str(uuid.uuid4())}).encode());self.assertEqual(401,status)
+ def admin(self,path='',data=None,cookie=None,origin='https://localhost',authorized=True):
+  headers={'Host':'localhost','Content-Type':'application/x-www-form-urlencoded'}
+  if authorized:headers.update({'X-DiPlay-Admin':'admin','X-DiPlay-Admin-Token':'test-admin-proxy'})
+  if cookie:headers['Cookie']=cookie
+  if origin:headers['Origin']=origin
+  req=urllib.request.Request(self.url+'/admin/'+path,data=data,headers=headers)
+  try:
+   with urllib.request.urlopen(req) as r:return r.status,r.read().decode(),r.headers
+  except urllib.error.HTTPError as e:return e.code,e.read().decode(),e.headers
+ def test_admin_requires_login_and_has_private_headers(self):
+  self.assertEqual(401,self.admin(authorized=False)[0])
+  status,page,headers=self.admin()
+  self.assertEqual(200,status);self.assertIn('生成配对码',page)
+  self.assertEqual('no-store',headers['Cache-Control'])
+  self.assertIn('HttpOnly',headers['Set-Cookie']);self.assertIn('Secure',headers['Set-Cookie'])
+  self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
+ def test_admin_csrf_origin_expiry_and_bounds(self):
+  import re,urllib.parse
+  _,page,headers=self.admin();token=re.search(r'name="csrf" value="([^"]+)"',page)[1]
+  cookie=headers['Set-Cookie'].split(';')[0]
+  def post(csrf=token,uses='2',origin='https://localhost',saved=cookie):
+   return self.admin('generate',urllib.parse.urlencode({'csrf':csrf,'uses':uses}).encode(),saved,origin)[0]
+  self.assertEqual(403,post(csrf='bad'));self.assertEqual(403,post(origin='https://evil.example'));self.assertEqual(403,post(saved=None))
+  self.assertEqual(400,post(uses='5'));self.assertFalse(m.valid_admin_token('0.'+'a'*48+'.'+'b'*64))
+  with m.db() as c:self.assertEqual(0,c.execute('SELECT COUNT(*) FROM codes').fetchone()[0])
+ def test_admin_generated_code_enrolls_and_is_only_hashed(self):
+  import re,urllib.parse
+  _,page,headers=self.admin();token=re.search(r'name="csrf" value="([^"]+)"',page)[1]
+  status,result,_=self.admin('generate',urllib.parse.urlencode({'csrf':token,'uses':'1'}).encode(),headers['Set-Cookie'].split(';')[0])
+  self.assertEqual(200,status);code=re.search(r'id="code" value="([A-F0-9]{12})"',result)[1]
+  with m.db() as c:
+   row=c.execute('SELECT * FROM codes').fetchone();self.assertEqual(m.sha(code),row['hash']);self.assertEqual(1,row['remaining'])
+  body=lambda:json.dumps({'code':code,'installationId':str(uuid.uuid4())}).encode()
+  self.assertEqual(200,self.request('/enroll',body())[0]);self.assertEqual(401,self.request('/enroll',body())[0])
 if __name__=='__main__':unittest.main()

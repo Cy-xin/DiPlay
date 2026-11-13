@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Private DiPlay diagnostic intake. Upload-only HTTPS via nginx; retrieval is SSH/CLI only."""
+import html
+from urllib.parse import parse_qs
+from http.cookies import SimpleCookie
 import argparse, collections, gzip, hashlib, hmac, json, os, re, secrets, sqlite3, threading, time, uuid, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,6 +14,9 @@ BASE='/diplay-diagnostics/v1'
 ROOT=Path(os.environ.get('DIPLAY_DIAGNOSTICS_DATA','/var/lib/diplay-diagnostics'))
 LOCK=threading.RLock()
 RATE=collections.defaultdict(collections.deque)
+ADMIN=BASE+'/admin/'
+ADMIN_SECRET=secrets.token_bytes(32)
+ADMIN_PROXY_TOKEN=""
 
 def now(): return int(time.time()*1000)
 def sha(value): return hashlib.sha256(value.encode()).hexdigest()
@@ -23,6 +29,9 @@ def db():
     return con
 
 def init():
+    global ADMIN_PROXY_TOKEN
+    proxy_key=ROOT/"admin_proxy.key"
+    ADMIN_PROXY_TOKEN=proxy_key.read_text().strip() if proxy_key.exists() else ""
     ROOT.mkdir(parents=True,exist_ok=True,mode=0o700)
     (ROOT/'reports').mkdir(exist_ok=True,mode=0o700)
     with db() as c:
@@ -83,6 +92,24 @@ def prune(c):
             c.execute('DELETE FROM reports WHERE id=?',(row['id'],))
     c.execute('DELETE FROM codes WHERE expires<? OR remaining<=0',(now(),))
 
+def pairing_code(uses):
+    if uses not in (1,2,3,4):raise ValueError('invalid uses')
+    code=secrets.token_hex(6).upper()
+    with LOCK,db() as c:
+        c.execute('DELETE FROM codes WHERE expires<? OR remaining<=0',(now(),))
+        c.execute('INSERT INTO codes VALUES(?,?,?)',(sha(code),now()+86400000,uses))
+    return code
+
+def admin_token():
+    payload=str(now())+'.'+secrets.token_hex(24)
+    return payload+'.'+hmac.new(ADMIN_SECRET,payload.encode(),'sha256').hexdigest()
+
+def valid_admin_token(token):
+    try:
+        issued,nonce,signature=token.split('.')
+        return 0<=now()-int(issued)<=1200000 and len(nonce)==48 and hmac.compare_digest(signature,hmac.new(ADMIN_SECRET,(issued+'.'+nonce).encode(),'sha256').hexdigest())
+    except (ValueError,TypeError):return False
+
 class Server(ThreadingHTTPServer):
     daemon_threads=True
     def __init__(self,*a,**k):self.slots=threading.BoundedSemaphore(8);super().__init__(*a,**k)
@@ -99,7 +126,30 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self,status,value):
         data=json.dumps(value,ensure_ascii=False).encode()
         self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    def admin_reply(self,status,code='',uses=2):
+        token=admin_token()
+        template=Path(__file__).with_name('pairing_admin.html').read_text()
+        content=template.replace('{{csrf}}',html.escape(token,quote=True)).replace('{{code}}',html.escape(code)).replace('{{uses}}',str(uses)).replace('{{result_hidden}}','' if code else 'hidden')
+        data=content.encode()
+        self.send_response(status)
+        self.send_header('Content-Type','text/html; charset=utf-8')
+        self.send_header('Cache-Control','no-store')
+        self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header('X-Content-Type-Options','nosniff')
+        self.send_header('Referrer-Policy','no-referrer')
+        self.send_header('Set-Cookie','diplay_admin_csrf='+token+'; Path='+ADMIN+'; Secure; HttpOnly; SameSite=Strict; Max-Age=1200')
+        self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
+    def admin_authorized(self):
+        # Set only by the isolated nginx Basic Auth location. Backend stays loopback-only.
+        return bool(ADMIN_PROXY_TOKEN) and self.headers.get('X-DiPlay-Admin')=='admin' and hmac.compare_digest(self.headers.get('X-DiPlay-Admin-Token',''),ADMIN_PROXY_TOKEN)
     def do_GET(self):
+        if self.path.startswith(ADMIN):
+            if not self.admin_authorized():self.reply(401,{'error':'admin login required'});return
+            if self.path==ADMIN:self.admin_reply(200);return
+            if self.path==ADMIN+'copy.js':
+                data=b"document.querySelector('#copy').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(document.querySelector('#code').value);document.querySelector('#feedback').textContent='\xe5\xb7\xb2\xe5\xa4\x8d\xe5\x88\xb6';}catch(e){document.querySelector('#code').select();document.querySelector('#feedback').textContent='\xe8\xaf\xb7\xe9\x95\xbf\xe6\x8c\x89\xe9\x85\x8d\xe5\xaf\xb9\xe7\xa0\x81\xe5\xa4\x8d\xe5\x88\xb6';}});"
+                self.send_response(200);self.send_header('Content-Type','text/javascript; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+            self.reply(404,{'error':'not found'});return
         if self.path==BASE+'/health':self.reply(200,{'service':'diplay-diagnostics','schemaVersion':1})
         else:self.reply(404,{'error':'not found'})
     def do_POST(self):
@@ -107,6 +157,21 @@ class Handler(BaseHTTPRequestHandler):
             ip=self.headers.get('X-Real-IP',self.client_address[0])
             if self.headers.get('Transfer-Encoding'):raise ValueError('chunked requests are not supported')
             length=int(self.headers.get('Content-Length','0'))
+            if self.path==ADMIN+'generate':
+                if not self.admin_authorized():self.reply(401,{'error':'admin login required'});return
+                if not 0<length<=2048:raise ValueError('size')
+                if self.headers.get('Origin')!='https://'+self.headers.get('Host',''):
+                    self.reply(403,{'error':'invalid origin'});return
+                if self.headers.get('Content-Type','').split(';')[0]!='application/x-www-form-urlencoded':raise ValueError('form')
+                payload=parse_qs(self.rfile.read(length).decode(),strict_parsing=True,max_num_fields=4)
+                cookie=SimpleCookie();cookie.load(self.headers.get('Cookie',''))
+                token=payload.get('csrf',[''])[0]
+                saved=cookie.get('diplay_admin_csrf')
+                if not saved or not valid_admin_token(token) or not hmac.compare_digest(token,saved.value):
+                    self.reply(403,{'error':'form expired; reopen admin page'});return
+                limit('admin:'+ip,10,60)
+                uses=int(payload.get('uses',['2'])[0])
+                self.admin_reply(200,pairing_code(uses),uses);return
             enrollment=self.path==BASE+'/enroll'
             if self.path not in (BASE+'/enroll',BASE+'/reports'):self.reply(404,{'error':'not found'});return
             if not 0<length<=(2048 if enrollment else MAX_COMPRESSED):self.reply(413,{'error':'size limit'});return
@@ -157,8 +222,7 @@ def main():
     args=parser.parse_args();init()
     if args.action=='serve':Server(('127.0.0.1',8796),Handler).serve_forever()
     elif args.action=='pair':
-        code=secrets.token_hex(6).upper()
-        with db() as c:c.execute('INSERT INTO codes VALUES(?,?,?)',(sha(code),now()+86400000,min(4,max(1,args.uses))))
+        code=pairing_code(min(4,max(1,args.uses)))
         print(code) # one-day upload-only enrollment code, intentionally presented to the owner
     elif args.action=='list':
         with db() as c:
