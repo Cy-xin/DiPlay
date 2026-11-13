@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 121
-        versionName = "0.7.2-geely-vehicle-audio"
+        versionCode = 122
+        versionName = "0.8.0-geely-audio-routing"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

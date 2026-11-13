@@ -36,12 +36,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.launch
 
-internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
+internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD, AUDIO_ROUTE }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
     var audit:(String,String)->Unit={_,_->}
     var refreshLocalLog:()->Unit={}
     var exportLocalLog:()->Unit={}
+    var audioMappings by mutableStateOf<Map<ReceiverAudioRole,String>>(emptyMap())
+    var audioOutputBuses by mutableStateOf<Set<String>>(emptySet())
+    var audioMappingRole by mutableStateOf(ReceiverAudioRole.MEDIA)
+    var saveAudioMapping:(ReceiverAudioRole,String)->Unit={_,_->}
+    var resetAudioMappings:()->Unit={}
+    var refreshAudioOutputs:()->Unit={}
     var uploadPaired by mutableStateOf(false)
     var uploadBusy by mutableStateOf(false)
     var pendingUpload by mutableStateOf(false)
@@ -307,7 +313,7 @@ internal class ReceiverUiState {
                 }
                 if(!wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide();focus.clearFocus()}))
-                if(ui.reconnectNeeded) Text(tr("画面设置已保存，下次连接生效。","Display settings saved. Applies next connection."),fontSize=13.sp,color=MaterialTheme.colorScheme.primary)
+                if(ui.reconnectNeeded) Text(tr("设置已保存，下次连接生效。","Settings saved. Applies next connection."),fontSize=13.sp,color=MaterialTheme.colorScheme.primary)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
                     Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
                 Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
@@ -329,6 +335,20 @@ internal class ReceiverUiState {
                     if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
                     if(matches(playback,"音频","缓冲","audio","buffer")) {
                         found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
+                    }
+                    if(matches(playback,"通道","映射","音乐","导航","电话","语音","铃声","routing","channel","Siri")) {
+                        found=true;section(tr("音频通道映射","Audio output mapping"))
+                        Text(tr("下次连接生效。让原车对应音量分组控制 CarPlay；手动改错可恢复默认。","Applies next connection. Use the car's volume groups for CarPlay; reset defaults if needed."),fontSize=13.sp)
+                        ReceiverAudioRole.entries.forEach {role ->
+                            val choice=ui.audioMappings[role] ?: ReceiverAudioRouting.AUTO
+                            val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
+                            val note=if(bus==null) "" else if(bus in ui.audioOutputBuses) tr(" · 通道已检测"," · Output detected") else tr(" · 当前未检测，连接时回退系统"," · Not detected; system fallback if unavailable")
+                            SettingsRow(tr(role.title,role.english),tr(ReceiverAudioRouting.title(choice),ReceiverAudioRouting.english(choice))+note,ui.displayEditable) {
+                                ui.refreshAudioOutputs();ui.audioMappingRole=role;ui.dialog=ReceiverDialog.AUDIO_ROUTE
+                            }
+                        }
+                        TextButton({ui.resetAudioMappings()},enabled=ui.displayEditable) {Text(tr("恢复默认音频映射","Reset audio mapping"))}
+                        Text(tr("通道已检测不代表已成功切换；以连接诊断和实车音量效果为准。通话与铃声在本车配置中共用音量组。","Detection does not prove routing; verify diagnostics and actual volume behavior. Calls and ringtone share a volume group on this car."),fontSize=13.sp)
                     }
                     if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
                     if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
@@ -424,6 +444,27 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
             text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
+        return
+    }
+    if(dialog==ReceiverDialog.AUDIO_ROUTE) {
+        val role=ui.audioMappingRole
+        val choice=ui.audioMappings[role] ?: ReceiverAudioRouting.AUTO
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr(role.title,role.english)+tr("输出通道"," output"))},text={
+            Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
+                Text(tr("下次连接生效。选择原车音量分类对应的输出通道。跨类映射会改变声音分类和优先级；通道不可用时回退系统路由。","Applies next connection. Choose the car volume category. Cross-category mapping also changes audio priority; unavailable outputs use system routing."),fontSize=14.sp)
+                ReceiverAudioRouting.choices.forEach {value ->
+                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {
+                        ui.saveAudioMapping(role,value);ui.dialog=null
+                    }.semantics {this.role=Role.RadioButton;selected=choice==value},verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(choice==value,null,enabled=ui.displayEditable)
+                        Column(Modifier.weight(1f).padding(vertical=8.dp)) {
+                            Text(tr(ReceiverAudioRouting.title(value),ReceiverAudioRouting.english(value)),fontSize=16.sp)
+                            if(value !in listOf(ReceiverAudioRouting.AUTO,ReceiverAudioRouting.SYSTEM)) Text(value+if(value in ui.audioOutputBuses) tr(" · 已检测"," · Detected") else tr(" · 当前未检测"," · Not detected"),fontSize=12.sp)
+                        }
+                    }
+                }
+            }
+        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("取消","Cancel"))}})
         return
     }
     if(dialog==ReceiverDialog.DOCK) {

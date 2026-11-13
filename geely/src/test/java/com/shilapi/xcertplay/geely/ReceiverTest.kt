@@ -276,4 +276,17 @@ class ReceiverTest {
         assertEquals(false,field(activity,"recovering"));assertFalse(activity.ui.busy);assertNull(field(activity,"controller"))
         lifecycle.pause().stop().destroy()
     }
+    @Test fun audioMappingSavesWithoutDisconnectingAndResetKeepsPlaybackPreferences() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        val token=field(activity,"generation")
+        GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,true)
+        activity.ui.connected=true
+        activity.saveAudioMapping(ReceiverAudioRole.MEDIA,"bus1_navigation_out")
+        assertEquals("bus1_navigation_out",activity.ui.audioMappings[ReceiverAudioRole.MEDIA]);assertTrue(activity.ui.reconnectNeeded)
+        assertEquals(token,field(activity,"generation"));assertEquals(true,field(activity,"connected"))
+        val buffer=activity.ui.bufferMs;activity.resetAudioMappings()
+        assertTrue(activity.ui.audioMappings.values.all {it==ReceiverAudioRouting.AUTO});assertEquals(buffer,activity.ui.bufferMs)
+        GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,false)
+        lifecycle.pause().stop().destroy()
+    }
 }

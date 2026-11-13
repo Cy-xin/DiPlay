@@ -78,6 +78,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         uploader=ReceiverDiagnosticUpload(applicationContext,journal)
         ui.audit={event,detail -> journal.event("operation",event,detail)}
         ui.exportLocalLog={exportLocalDiagnostics()}
+        ui.saveAudioMapping={role,value -> saveAudioMapping(role,value)}
+        ui.resetAudioMappings={resetAudioMappings()}
+        ui.refreshAudioOutputs={refreshAudioOutputs()}
         ui.refreshLocalLog={uploadWorker.execute {
             val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
             main.post {if(!destroyed) ui.logs=text}
@@ -190,7 +193,26 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.markReconnectNeeded();refreshPlaybackLabels()
         journal.event("operation","dock_preference_saved","mode=${dock.name} next_connection=true")
     }
+    private fun refreshAudioOutputs() {
+        ui.audioOutputBuses=com.shilapi.xcertplay.media.AudioOutputDevice.outputs(getSystemService(android.media.AudioManager::class.java))
+            .filter {it.type==android.media.AudioDeviceInfo.TYPE_BUS}.map {it.address}.toSet()
+    }
+    internal fun saveAudioMapping(role:ReceiverAudioRole,value:String) {
+        if(!ui.displayEditable) return
+        val choice=ReceiverAudioRouting.sanitize(value)
+        store.prefs.edit().putString(role.preference,choice).apply()
+        ui.audioMappings=ui.audioMappings+(role to choice);ui.markReconnectNeeded()
+        journal.event("audio","output_mapping_saved","role=${role.name} choice=$choice next_connection=true")
+    }
+    internal fun resetAudioMappings() {
+        if(!ui.displayEditable) return
+        store.prefs.edit().apply {ReceiverAudioRole.entries.forEach {remove(it.preference)}}.apply()
+        ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.AUTO};ui.markReconnectNeeded()
+        journal.event("audio","output_mapping_reset","next_connection=true")
+    }
     private fun refreshPlaybackLabels() {
+        ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.sanitize(store.prefs.getString(it.preference,null))}
+        refreshAudioOutputs()
         ui.bufferMs=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         ui.fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         ui.quality=ReceiverDisplaySettings.quality(store.prefs.getInt("display_quality",100))
@@ -253,6 +275,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val config=ReceiverConfig(mode,ui.ssid,ui.password,ui.networkInterface.trim(),phone)
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
+        val audioMappings=ui.audioMappings.toMap()
         val displayQuality=ui.quality;val displaySize=ui.carPlaySize
         val dock=ReceiverDockPosition.from(ui.dockPosition)
         secret=config.password
@@ -299,7 +322,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                         ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(rotation!=null) "（横竖屏旋转画布）" else if(display.fallback) "（设备能力限制，已回退）" else "")
                         store.prefs.edit().putString("last_display_summary",ui.displayApplied).apply()
                         journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback} rotating=$rotating square=$square dock=${dock.name} rightHandDrive=${dock.rightHandDrive}")
-                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val audioOutputs=com.shilapi.xcertplay.media.AudioOutputDevice.outputs(getSystemService(android.media.AudioManager::class.java)).map {com.shilapi.xcertplay.media.AudioOutputDevice.from(it)}
+                        val audioRoutes=ReceiverAudioRouting.routes(audioMappings,Build.MODEL,audioOutputs)
+                        audioMappings.forEach {(role,choice) ->
+                            val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
+                            journal.event("audio","output_mapping_plan","role=${role.name} choice=$choice bus=${bus ?: "system"} detected=${bus!=null && audioOutputs.any {it.address==bus}}")
+                        }
+                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,audioOutputRoutes=audioRoutes,audioUsageOverrides=ReceiverAudioRouting.usages(audioMappings),wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")

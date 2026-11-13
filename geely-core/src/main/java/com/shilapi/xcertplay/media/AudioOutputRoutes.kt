@@ -20,3 +20,11 @@ data class AudioOutputRoutes(
     internal fun microphone(audioType: String): AudioOutputDevice? = if (isPhoneAudio(audioType)) phoneMicrophone
         else assistantMicrophone.takeIf { audioType.equals("speechrecognition", true) }
 }
+
+/** Only the five app output categories may be remapped; never emit vendor or unknown usages. */
+internal fun mappedAudioUsage(standard:Int,overrides:Map<Int,Int>):Int {
+    val supported=setOf(android.media.AudioAttributes.USAGE_MEDIA,android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE,
+        android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION,android.media.AudioAttributes.USAGE_ASSISTANT,
+        android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+    return if(standard in supported) overrides[standard]?.takeIf {it in supported} ?: standard else standard
+}

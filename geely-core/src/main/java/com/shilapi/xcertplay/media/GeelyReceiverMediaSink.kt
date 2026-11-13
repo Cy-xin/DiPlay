@@ -74,6 +74,7 @@ class AndroidMediaSink(
     private val videoFps: Int = 60,
     private val navigationOutputDevice: AudioOutputDevice? = null,
     private val audioOutputRoutes: AudioOutputRoutes = AudioOutputRoutes(),
+    private val audioUsageOverrides: Map<Int,Int> = emptyMap(),
     onAudioOwnershipChanged: (Boolean) -> Unit = {},
     private val unifiedMediaOutput: Boolean = false,
     private val bluetoothOutput: Boolean = false,
@@ -793,6 +794,7 @@ class AndroidMediaSink(
             audioManager,
             navigationOutputDevice,
             audioOutputRoutes,
+            audioUsageOverrides,
             unifiedMediaOutput,
             echoReference = echoReference,
             voiceFilter = callVoiceFilter && format.audioType == TELEPHONY_AUDIO_TYPE,
@@ -1837,6 +1839,7 @@ private class AudioRenderer(
     private val audioManager: AudioManager?,
     private val navigationOutputDevice: AudioOutputDevice?,
     private val audioOutputRoutes: AudioOutputRoutes,
+    private val audioUsageOverrides: Map<Int,Int>,
     private val unifiedMediaOutput: Boolean,
     private val onReleased: (AudioRenderer) -> Unit,
     private val speakerphoneCall: Boolean = false,
@@ -2334,7 +2337,8 @@ private class AudioRenderer(
             AudioChannel.NAVIGATION -> "GUIDANCE"
             AudioChannel.RINGTONE -> "RING"
         }
-        return factoryAudio?.audioUsage(kind, standardUsageFor(channel)) ?: standardUsageFor(channel)
+        val standard=mappedAudioUsage(standardUsageFor(channel),audioUsageOverrides)
+        return factoryAudio?.audioUsage(kind, standard) ?: standard
     }
 
     private fun standardUsageFor(channel: AudioChannel): Int = when (channel) {
