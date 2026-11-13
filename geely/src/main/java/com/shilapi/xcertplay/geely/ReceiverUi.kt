@@ -58,6 +58,8 @@ internal class ReceiverUiState {
     var dockPosition by mutableIntStateOf(0)
     var displayApplied by mutableStateOf("")
     var timingReport by mutableStateOf("")
+    var connectionCheck by mutableStateOf("点击连接后逐项检查配置、认证、网络、蓝牙和画面。")
+    var runtimeHealth by mutableStateOf("尚无当前会话运行数据")
     var reconnectNeeded by mutableStateOf(false)
     fun markReconnectNeeded() {reconnectNeeded=true}
     var busy by mutableStateOf(false)
@@ -371,6 +373,10 @@ internal class ReceiverUiState {
         PageHeading(tr("诊断","Diagnostics"),tr("记录问题，方便下次排查","Record an issue for troubleshooting"))
         GlassSurface(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text("连接自检",fontSize=16.sp)
+                SelectionContainer {Text(ui.connectionCheck,fontSize=14.sp)}
+                Text("运行指标",fontSize=16.sp)
+                SelectionContainer {Text(ui.runtimeHealth,fontSize=14.sp)}
                 if(ui.timingReport.isNotBlank()) SelectionContainer {Text(ReceiverConnectionTiming.describe(ui.timingReport),fontSize=14.sp)}
                 if(ui.displayApplied.isNotBlank()) Text(ui.displayApplied,fontSize=13.sp)
                 Text(tr("持续记录本应用操作与连接诊断，保留最近7天、最多约8MB；不含密码、密钥、输入内容、录音或画面。只在你点击后上传。",

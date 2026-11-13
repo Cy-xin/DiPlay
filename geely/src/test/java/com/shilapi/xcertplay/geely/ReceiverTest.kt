@@ -265,4 +265,15 @@ class ReceiverTest {
         assertEquals(false,field(activity,"busy"));assertEquals(0,field(activity,"generation"));assertNull(field(activity,"controller"));assertNull(field(activity,"leaseToken"))
         lifecycle.pause().stop().destroy()
     }
+    @Test fun scheduledRecoveryCanBeCancelledBeforeItCreatesAController() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        GeelyActivity::class.java.getDeclaredMethod("recoverOrEnd",String::class.java,Boolean::class.javaPrimitiveType).apply {isAccessible=true}.invoke(activity,"network changed",true)
+        val worker=field(activity,"worker") as ExecutorService
+        worker.submit {}.get(5,TimeUnit.SECONDS);shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(true,field(activity,"recovering"));assertTrue(activity.ui.busy)
+        GeelyActivity::class.java.getDeclaredMethod("endAttempt",String::class.java).apply {isAccessible=true}.invoke(activity,"已取消连接")
+        worker.submit {}.get(5,TimeUnit.SECONDS);shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6))
+        assertEquals(false,field(activity,"recovering"));assertFalse(activity.ui.busy);assertNull(field(activity,"controller"))
+        lifecycle.pause().stop().destroy()
+    }
 }

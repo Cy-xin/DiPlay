@@ -58,6 +58,18 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var pendingPermissions = false
     private var timeout: Runnable? = null
     private var secret = ""
+    private val health=ReceiverHealth()
+    private val recovery=ReceiverRecovery()
+    private var recoveryTask:Runnable?=null
+    private var recovering=false
+    private fun cancelRecovery() {
+        recoveryTask?.let(main::removeCallbacks);recoveryTask=null;recovering=false
+    }
+    private fun recoverOrEnd(reason:String,transient:Boolean) {
+        if(stopping || destroyed) return
+        val delay=recovery.nextDelay(transient)
+        endAttempt(reason,delay)
+    }
     private val connectionTiming=ReceiverConnectionTiming(android.os.SystemClock::elapsedRealtime)
     private var message = "未连接。请先按说明连接网络并配对蓝牙。"
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,7 +139,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     onMode={ switchMode(it) },
                     onUpload={retry -> uploadDiagnostics(retry) },
                     onPairUpload={code -> pairDiagnostics(code) },
-                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(busy) endAttempt("已取消连接") else connect() },
+                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(recovering || busy) endAttempt("已取消连接") else {recovery.reset();connect()} },
                     onDisconnect={ journal.event("operation","disconnect_pressed");endAttempt("已断开，可重新连接") },
                     onBluetooth={ journal.event("operation","open_system_bluetooth");saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     onPhone={ loadPhoneChoices() },
@@ -234,6 +246,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if (!ReceiverSessionGate.acquire(lease)) { update("上一连接仍在释放，请稍后重试。");return }
         leaseToken=lease
         connectionTiming.start()
+        ui.connectionCheck=connectionTiming.checkReport()
+        health.reset();ui.runtimeHealth=health.describe()
         saveInputs()
         val config=ReceiverConfig(mode,ui.ssid,ui.password,ui.networkInterface.trim(),phone)
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
@@ -300,13 +314,14 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
     }
     private fun listener(token:Int)=object:AirPlaySessionListener {
+        @Volatile private var controlFailure:String?=null
         override fun onTcpAccepted(event:AirPlayTcpAccepted) {main.post {if(token==generation && !destroyed) timingStage(ReceiverConnectionTiming.Stage.HANDSHAKE)}}
         override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;root.post {fitSessionSurface()};timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
             connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
-        override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) endAttempt("iPhone 已断开，可重新连接。") } }
-        override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) endAttempt("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。") } }
+        override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) recoverOrEnd("iPhone 已断开，可重新连接。",controlFailure?.let(ReceiverRecovery::transient)==true) } }
+        override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) recoverOrEnd("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。",ReceiverRecovery.transient(message)) } }
         override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) showReceiverHome() } }
         override fun onCommand(session:AirPlaySession,type:String,params:Map<String,Any?>) {
             if(token!=generation || type!="modesChanged") return
@@ -316,7 +331,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             val detail="Audio: modes resources=$resources"
             log(detail);android.util.Log.i("DiPlay-Audio",detail)
         }
-        override fun onDebugLog(message:String) { log(message) }
+        override fun onDebugLog(message:String) {
+            if(message.startsWith("airplay control closing reason=control I/O failed:")) controlFailure=message
+            if(token==generation) log(message)
+        }
     }
     private fun onStatus(token:Int,state:CarPlayStatus) {
         if(token!=generation || destroyed || (connected && state !is CarPlayStatus.Failed)) return
@@ -330,7 +348,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             else -> Unit
         }
         when(state) {
-            is CarPlayStatus.Failed -> { log("连接失败: "+state.message);endAttempt("连接失败："+friendlyFailure(state.message)) }
+            is CarPlayStatus.Failed -> { log("连接失败: "+state.message);recoverOrEnd("连接失败："+friendlyFailure(state.message),ReceiverRecovery.transient(state.message)) }
             CarPlayStatus.WaitingForPairedIphone -> update("正在选择已配对 iPhone；请保持手机蓝牙开启。")
             CarPlayStatus.ConnectingBluetooth -> update("正在通过蓝牙完成首次认证与网络交接…")
             is CarPlayStatus.HotspotReady -> update("网络接口就绪，正在建立 CarPlay（尚未连接）。")
@@ -340,9 +358,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
     }
     private fun timingStage(stage:ReceiverConnectionTiming.Stage) {
-        if(connectionTiming.advance(stage)) journal.event("connection","timing_stage","stage=${stage.name} elapsedMs=${connectionTiming.elapsedMs()}")
+        if(connectionTiming.advance(stage)) {ui.connectionCheck=connectionTiming.checkReport();journal.event("connection","timing_stage","stage=${stage.name} elapsedMs=${connectionTiming.elapsedMs()}")}
     }
     private fun finishTiming(result:String) {
+        if(connectionTiming.running) ui.connectionCheck=if(result=="success") "连接自检通过：网络、蓝牙交接、协议会话和首帧已完成。声音与触摸请实际体验确认。" else connectionTiming.checkReport(result=="failed")
         val report=connectionTiming.finish(result) ?: return
         ui.timingReport=report
         store.prefs.edit().putString("last_connection_timing",report).apply()
@@ -373,7 +392,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         message.contains("network changed",true) -> "Wi-Fi 已变化或断开，请恢复网络后重试。"
         else -> "未能完成 CarPlay 握手。请核对网络、蓝牙配对及手机授权；同一局域网还需允许设备互通和组播。详细阶段见本地诊断。"
     }
-    private fun endAttempt(reason:String) {
+    private fun endAttempt(reason:String)=endAttempt(reason,null)
+    private fun endAttempt(reason:String,retryDelay:Long?) {
+        cancelRecovery()
         if(stopping) return
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
@@ -394,6 +415,15 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                 stopping=!released
                 update(if(released) reason else "连接资源尚未释放，已阻止新任务。请在系统应用信息中强行停止本应用后重新打开。")
                 applyState()
+                if(released && retryDelay!=null && foreground) {
+                    recovering=true;ui.busy=true
+                    update(reason+"\n将在 ${retryDelay/1000} 秒后尝试恢复（${recovery.attempts}/2），可点击取消。")
+                    journal.event("connection","recovery_scheduled","attempt=${recovery.attempts} delayMs=$retryDelay")
+                    recoveryTask=Runnable {
+                        recoveryTask=null;recovering=false;ui.busy=false
+                        if(!destroyed && foreground && !stopping) connect()
+                    }.also {main.postDelayed(it,retryDelay)}
+                }
             } }
         }
     }
@@ -437,6 +467,11 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
     private fun log(value:String) {
+        val measurement=value.removePrefix("Video: ")
+        if(measurement.startsWith("video stats") || measurement.startsWith("output format requested=") || measurement.startsWith("audio stats ")) {
+            val token=generation
+            main.post {if(!destroyed && token==generation && (busy || connected) && health.observe(measurement)) ui.runtimeHealth=health.describe()}
+        }
         journal.event(if(value.startsWith("Audio:") || value.startsWith("audio ")) "audio" else "protocol","diagnostic",value,
             if(value.contains("失败") || value.contains("exception",true)) "WARN" else "INFO")
     }
@@ -503,9 +538,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
-        saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
+        cancelRecovery();saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
     }
 }
