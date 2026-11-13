@@ -46,6 +46,11 @@ internal object ReceiverAudioRouting {
         val target=ReceiverAudioRole.entries.firstOrNull {it.bus==sanitize(values[role])}
         target?.let {role.usage to it.usage}
     }.toMap()
+    fun testPlan(role:ReceiverAudioRole,values:Map<ReceiverAudioRole,String>,model:String,outputs:List<AudioOutputDevice>):AudioTestPlan {
+        val routes=routes(values,model,outputs)
+        val preferred=when(role) {ReceiverAudioRole.MEDIA->routes.media;ReceiverAudioRole.NAVIGATION->routes.navigation;ReceiverAudioRole.PHONE->routes.phone;ReceiverAudioRole.ASSISTANT->routes.assistant;ReceiverAudioRole.RINGTONE->routes.ringtone}
+        return AudioTestPlan(role,usages(values)[role.usage] ?: role.usage,preferred)
+    }
     fun routes(values:Map<ReceiverAudioRole,String>,model:String,outputs:List<AudioOutputDevice>):AudioOutputRoutes {
         fun preferred(role:ReceiverAudioRole):AudioOutputDevice? {
             val address=bus(role,values[role],model) ?: return null

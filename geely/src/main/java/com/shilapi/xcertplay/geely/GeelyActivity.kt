@@ -58,6 +58,33 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var pendingPermissions = false
     private var timeout: Runnable? = null
     private var secret = ""
+    private var audioTest:ReceiverAudioTest?=null
+    private var audioTestGeneration=0
+    private fun stopAudioTest() {audioTest?.stop()}
+    internal fun testAudio(role:ReceiverAudioRole) {
+        if(!foreground || busy || connected || stopping || recovering || destroyed || ui.testingAudioRole!=null) return
+        val tester=audioTest ?: ReceiverAudioTest({plan,cancel ->AndroidAudioTestOutput(applicationContext,plan,cancel)}).also {audioTest=it}
+        val outputs=com.shilapi.xcertplay.media.AudioOutputDevice.outputs(getSystemService(android.media.AudioManager::class.java)).map {com.shilapi.xcertplay.media.AudioOutputDevice.from(it)}
+        val plan=ReceiverAudioRouting.testPlan(role,ui.audioMappings.toMap(),Build.MODEL,outputs)
+        val token=++audioTestGeneration
+        ui.testingAudioRole=role;ui.audioTestRemaining=5
+        journal.event("audio","test_requested","role=${role.name} usage=${plan.usage} bus=${plan.preferred?.address ?: "system"} durationMs=5000")
+        val started=tester.start(plan) {state ->
+            journal.event("audio","test_${state.phase.name.lowercase(java.util.Locale.ROOT)}","role=${role.name} remaining=${state.remaining} actualBus=${state.route?.actualBus} actualType=${state.route?.actualType} accepted=${state.route?.accepted} ${state.route?.describe().orEmpty()} error=${state.error.orEmpty()}",if(state.phase==ReceiverAudioTest.Phase.FAILED) "ERROR" else if(state.route?.mismatch==true || state.route?.accepted==false) "WARN" else "INFO")
+            main.post {if(!destroyed && token==audioTestGeneration) {
+                ui.audioTestRemaining=state.remaining
+                ui.audioTestMessage=when(state.phase) {
+                    ReceiverAudioTest.Phase.PREPARING -> "${role.title}：正在准备 5 秒测试…"
+                    ReceiverAudioTest.Phase.PLAYING -> "${role.title}：剩余 ${state.remaining} 秒\n${state.route?.describe().orEmpty()}"
+                    ReceiverAudioTest.Phase.FINISHED -> "${role.title}：5 秒测试已结束。请结合原车滑块效果确认。\n${state.route?.describe().orEmpty()}"
+                    ReceiverAudioTest.Phase.STOPPED -> if(state.error=="focus_lost") "${role.title}：系统音频焦点变化，测试已停止。" else "${role.title}：测试已停止。"
+                    ReceiverAudioTest.Phase.FAILED -> "${role.title}：测试失败，请检查通道或系统音频占用，详情见诊断日志。"
+                }
+                if(state.phase !in listOf(ReceiverAudioTest.Phase.PREPARING,ReceiverAudioTest.Phase.PLAYING)) ui.testingAudioRole=null
+            }}
+        }
+        if(!started) {ui.testingAudioRole=null;ui.audioTestMessage="上一项测试仍在释放，请稍后重试。"}
+    }
     private val health=ReceiverHealth()
     private val recovery=ReceiverRecovery()
     private var recoveryTask:Runnable?=null
@@ -81,6 +108,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.saveAudioMapping={role,value -> saveAudioMapping(role,value)}
         ui.resetAudioMappings={resetAudioMappings()}
         ui.refreshAudioOutputs={refreshAudioOutputs()}
+        ui.testAudio={testAudio(it)}
+        ui.stopAudioTest={stopAudioTest()}
         ui.saveLowLatencyVideo={enabled ->
             if(ui.displayEditable) {
                 store.prefs.edit().putBoolean("low_latency_video",enabled).apply()
@@ -206,15 +235,19 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     internal fun saveAudioMapping(role:ReceiverAudioRole,value:String) {
         if(!ui.displayEditable) return
+        stopAudioTest()
         val choice=ReceiverAudioRouting.sanitize(value)
         store.prefs.edit().putString(role.preference,choice).apply()
         ui.audioMappings=ui.audioMappings+(role to choice);ui.markReconnectNeeded()
+        ui.audioTestMessage="映射已更改，请重新测试。"
         journal.event("audio","output_mapping_saved","role=${role.name} choice=$choice next_connection=true")
     }
     internal fun resetAudioMappings() {
         if(!ui.displayEditable) return
+        stopAudioTest()
         store.prefs.edit().apply {ReceiverAudioRole.entries.forEach {remove(it.preference)}}.apply()
         ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.AUTO};ui.markReconnectNeeded()
+        ui.audioTestMessage="已恢复默认映射，可重新测试。"
         journal.event("audio","output_mapping_reset","next_connection=true")
     }
     private fun refreshPlaybackLabels() {
@@ -268,6 +301,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun connect() {
         if(busy || stopping || controller!=null || destroyed || !foreground) {journal.event("connection","duplicate_or_inactive_blocked");return}
+        stopAudioTest()
         if(!requestNecessaryPermissions()) return
         try {getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.forEach {journal.protect(it.name.orEmpty(),it.address)}} catch(_:SecurityException) {journal.event("permissions","device_identity_unavailable",level="WARN")}
         journal.attempt=java.util.UUID.randomUUID().toString()
@@ -307,6 +341,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_ACCELEROMETER),packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE),Build.MODEL.contains("KX11",true))
         worker.execute {
             try {
+                require(audioTest?.awaitStopped(1500)!=false) {"音频测试尚未结束，请稍后重试。"}
                 config.validate();store.installAuthentication()
                 val identity=store.identity();val id=ReceiverStore.deviceId(identity)
                 val runtime=CarPlayRuntimeConfig(mfiTarget=MfiTarget.LOCAL, identification=Iap2IdentificationConfig("DiPlay Geely","KX11_A2","DiPlay","DIPLAY-"+id.replace(":",""),"0.1.0","1.0",0),
@@ -597,8 +632,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
+        ++audioTestGeneration;stopAudioTest()
         cancelRecovery();saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
     }

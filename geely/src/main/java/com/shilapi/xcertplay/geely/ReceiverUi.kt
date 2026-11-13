@@ -62,6 +62,11 @@ internal class ReceiverUiState {
     var phoneName by mutableStateOf("自动选择已配对的 iPhone")
     var bufferMs by mutableIntStateOf(200)
     var fps by mutableIntStateOf(30)
+    var testingAudioRole by mutableStateOf<ReceiverAudioRole?>(null)
+    var audioTestRemaining by mutableIntStateOf(5)
+    var audioTestMessage by mutableStateOf("")
+    var testAudio:(ReceiverAudioRole)->Unit={}
+    var stopAudioTest:()->Unit={}
     var lowLatencyVideo by mutableStateOf(false)
     var saveLowLatencyVideo:(Boolean)->Unit={}
     var quality by mutableIntStateOf(100)
@@ -340,13 +345,24 @@ internal class ReceiverUiState {
                     }
                     if(matches(playback,"通道","映射","音乐","导航","电话","语音","铃声","routing","channel","Siri")) {
                         found=true;section(tr("音频通道映射","Audio output mapping"))
+                        DisposableEffect(Unit) {onDispose {ui.stopAudioTest()}}
+                        Text(tr("每项可播放 5 秒低电平测试音。先调低原车音量，再调整对应滑块核对；测试前请断开 CarPlay。","Each test plays a low-level tone for 5 seconds. Start with low car volume and adjust the corresponding slider. Disconnect CarPlay before testing."),fontSize=13.sp)
+                        Text(ui.audioTestMessage.ifBlank {tr("选择一项开始测试，可随时停止。测试音不能代替真实 CarPlay 通话或导航验证。","Choose a test and stop at any time. Tones do not replace real CarPlay call or guidance validation.")},
+                            Modifier.fillMaxWidth().height(ReceiverTokens.audioTestStatus).verticalScroll(rememberScrollState()).semantics {liveRegion=LiveRegionMode.Polite},fontSize=13.sp,lineHeight=18.sp)
                         Text(tr("下次连接生效。让原车对应音量分组控制 CarPlay；手动改错可恢复默认。","Applies next connection. Use the car's volume groups for CarPlay; reset defaults if needed."),fontSize=13.sp)
                         ReceiverAudioRole.entries.forEach {role ->
                             val choice=ui.audioMappings[role] ?: ReceiverAudioRouting.AUTO
                             val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
                             val note=if(bus==null) "" else if(bus in ui.audioOutputBuses) tr(" · 通道已检测"," · Output detected") else tr(" · 当前未检测，连接时回退系统"," · Not detected; system fallback if unavailable")
                             SettingsRow(tr(role.title,role.english),tr(ReceiverAudioRouting.title(choice),ReceiverAudioRouting.english(choice))+note,ui.displayEditable) {
-                                ui.refreshAudioOutputs();ui.audioMappingRole=role;ui.dialog=ReceiverDialog.AUDIO_ROUTE
+                                ui.stopAudioTest();ui.refreshAudioOutputs();ui.audioMappingRole=role;ui.dialog=ReceiverDialog.AUDIO_ROUTE
+                            }
+                            val testing=ui.testingAudioRole==role
+                            val testLabel=if(testing) tr("停止测试 · 剩余 ${ui.audioTestRemaining} 秒","Stop test · ${ui.audioTestRemaining}s remaining") else tr("测试播放 5 秒","Play test for 5s")
+                            val testDescription=tr(role.title,role.english)+"，"+testLabel
+                            OutlinedButton({if(testing) ui.stopAudioTest() else ui.testAudio(role)},
+                                enabled=testing || (ui.editable && ui.testingAudioRole==null),modifier=Modifier.heightIn(min=ReceiverTokens.touch).semantics {contentDescription=testDescription}) {
+                                Text(testLabel)
                             }
                         }
                         TextButton({ui.resetAudioMappings()},enabled=ui.displayEditable) {Text(tr("恢复默认音频映射","Reset audio mapping"))}

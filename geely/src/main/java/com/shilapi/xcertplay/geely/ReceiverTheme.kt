@@ -50,6 +50,7 @@ internal object ReceiverTokens {
     val gap=8.dp
     val page=20.dp
     val touch=48.dp
+    val audioTestStatus=80.dp
     val panel=RoundedCornerShape(28.dp)
     val control=RoundedCornerShape(20.dp)
     val light=lightColorScheme(background=Color(0xFFDCEBFA),surface=Color(0xFFF3F8FF),

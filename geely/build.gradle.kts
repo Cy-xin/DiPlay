@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 123
-        versionName = "0.8.1-geely-video-latency"
+        versionCode = 124
+        versionName = "0.8.2-geely-audio-test"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

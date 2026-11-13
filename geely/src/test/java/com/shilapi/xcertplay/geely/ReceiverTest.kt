@@ -301,4 +301,25 @@ class ReceiverTest {
         activity.ui.saveLowLatencyVideo(false);assertFalse(activity.ui.lowLatencyVideo)
         lifecycle.pause().stop().destroy()
     }
+    @Test fun audioTestCannotStartDuringCarPlayOrConnection() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,true)
+        activity.testAudio(ReceiverAudioRole.MEDIA);assertNull(field(activity,"audioTest"));assertNull(activity.ui.testingAudioRole)
+        GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,false)
+        GeelyActivity::class.java.getDeclaredField("busy").apply {isAccessible=true}.set(activity,true)
+        activity.testAudio(ReceiverAudioRole.NAVIGATION);assertNull(field(activity,"audioTest"))
+        GeelyActivity::class.java.getDeclaredField("busy").apply {isAccessible=true}.set(activity,false)
+        lifecycle.pause().stop().destroy()
+    }
+    @Test fun audioTestFailureClearsUiAndRecordsError() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        val test=ReceiverAudioTest({_,_->throw IllegalStateException("test output unavailable")},{0L},{})
+        GeelyActivity::class.java.getDeclaredField("audioTest").apply {isAccessible=true}.set(activity,test)
+        activity.testAudio(ReceiverAudioRole.MEDIA);assertTrue(test.awaitStopped(2000));shadowOf(Looper.getMainLooper()).idle()
+        assertNull(activity.ui.testingAudioRole);assertTrue(activity.ui.audioTestMessage.contains("测试失败"))
+        val log=(field(activity,"journal") as ReceiverDiagnostics).recent()
+        val failures=log.lineSequence().mapNotNull {runCatching {org.json.JSONObject(it)}.getOrNull()}.filter {it.optString("event")=="test_failed"}.toList()
+        assertTrue(failures.isNotEmpty());assertEquals("ERROR",failures.last().getString("level"))
+        lifecycle.pause().stop().destroy()
+    }
 }
