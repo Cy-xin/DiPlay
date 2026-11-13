@@ -72,7 +72,11 @@ class ReceiverTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(generation,field(activity,"generation"));assertEquals(true,field(activity,"connected"))
         val bounds=(field(activity,"video") as android.view.View).layoutParams
-        assertEquals(720,bounds.width);assertEquals(405,bounds.height)
+        // A later window traversal can replace the manually supplied size; fit the latest root.
+        val window=field(activity,"root") as android.view.View
+        assertEquals(window.width,bounds.width)
+        assertEquals(16f/9f,bounds.width.toFloat()/bounds.height,.02f)
+        assertTrue(bounds.height<=window.height)
         activity.disconnectFromNotification();(field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
     }

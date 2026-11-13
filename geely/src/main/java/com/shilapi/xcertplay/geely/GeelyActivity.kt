@@ -36,6 +36,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private lateinit var root: FrameLayout
     internal val ui = ReceiverUiState()
     private lateinit var video: SurfaceView
+    private lateinit var videoViewport:FrameLayout
+    private var sessionRotation:ReceiverRotationPlan?=null
+    private var previousOrientation=Configuration.ORIENTATION_UNDEFINED
     private var mode = ConnectionMode.CAR_HOTSPOT
     private var phone: String? = null
     private var phoneName = "自动选择已配对的 iPhone"
@@ -69,6 +72,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("lifecycle","activity_create")
         ui.uploadPaired=uploader.enrolled;ui.lastReport=uploader.lastReport
         store=ReceiverStore(this)
+        previousOrientation=resources.configuration.orientation
         ui.timingReport=store.prefs.getString("last_connection_timing","").orEmpty()
         ui.displayApplied=store.prefs.getString("last_display_summary","").orEmpty()
         window.setDecorFitsSystemWindows(false)
@@ -89,8 +93,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun buildUi() {
         root=FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        videoViewport=FrameLayout(this).apply {clipChildren=true;clipToPadding=true}
         video=SurfaceView(this)
-        root.addView(video, FrameLayout.LayoutParams(-1,-1))
+        videoViewport.addView(video,FrameLayout.LayoutParams(-1,-1))
+        root.addView(videoViewport, FrameLayout.LayoutParams(-1,-1))
+        root.addOnLayoutChangeListener {_,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom ->
+            if(right-left!=oldRight-oldLeft || bottom-top!=oldBottom-oldTop) root.post {if(!destroyed) fitSessionSurface()}
+        }
         video.holder.addCallback(object: SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface) }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format")}
@@ -237,6 +246,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             update("显示区域尚未就绪，请稍后重试。");applyState();return
         }
         configuredWidth=width;configuredHeight=height
+        val rotationEnabled=ReceiverRotationPlan.enabled(height>width,store.prefs.getBoolean("rotating_window_seen",false),
+            packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_ACCELEROMETER),packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE),Build.MODEL.contains("KX11",true))
         worker.execute {
             try {
                 config.validate();store.installAuthentication()
@@ -249,20 +260,25 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     manualHotspotSecurity=if(config.password.isEmpty()) ManualHotspotSecurity.OPEN else ManualHotspotSecurity.WPA2,
                     existingWifiSsid=config.ssid,existingWifiPassphrase=config.password)
                 val display=ReceiverDisplaySettings.plan(width,height,videoFps,displayQuality,displaySize)
-                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=display.display)
+                val rotating=rotationEnabled
+                val square=if(rotating) ReceiverTurningCanvas.squareSide(maxOf(display.display.widthPixels,display.display.heightPixels),ReceiverTurningCanvas.Picture.SMOOTHER,false) else null
+                require(height<=width || square!=null) {"当前设备不支持横竖切换画布，请将设备横屏后再连接。"}
+                val rotation= square?.let {ReceiverRotationPlan.build(display.display,width,height,it)}
+                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=rotation?.display ?: display.display)
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
                     try {
+                        sessionRotation=rotation
                         ui.reconnectNeeded=false
-                        ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(display.fallback) "（设备能力限制，已回退）" else "")
+                        ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(rotation!=null) "（横竖屏旋转画布）" else if(display.fallback) "（设备能力限制，已回退）" else "")
                         store.prefs.edit().putString("last_display_summary",ui.displayApplied).apply()
-                        journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback}")
+                        journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback} rotating=$rotating square=$square")
                         val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
-                        controller=next;next.start()
+                        controller=next;root.post {if(!destroyed) fitSessionSurface()};next.start()
                     } catch(e:Exception) { log("启动失败: "+e.javaClass.simpleName);endAttempt("无法启动连接：请检查本地诊断并重试。") }
                 }
             } catch(e:Exception) {
@@ -275,7 +291,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun listener(token:Int)=object:AirPlaySessionListener {
         override fun onTcpAccepted(event:AirPlayTcpAccepted) {main.post {if(token==generation && !destroyed) timingStage(ReceiverConnectionTiming.Stage.HANDSHAKE)}}
-        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
+        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;root.post {fitSessionSurface()};timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
             connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
@@ -331,6 +347,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun showCarPlay() {
         if(!connected) return
         ui.showCarPlay=true;ui.settingsOpen=false;ui.dialog=null
+        root.post {fitSessionSurface()}
         journal.event("operation","carplay_shown","session_retained=true")
     }
     internal fun disconnectFromNotification() {if(!destroyed && !stopping) endAttempt("已主动断开，可重新连接。");else stopService(Intent(this,ReceiverSessionService::class.java))}
@@ -351,7 +368,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
         stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
-        ui.showCarPlay=false
+        ui.showCarPlay=false;sessionRotation=null
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
@@ -371,13 +388,37 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
     }
     private fun fitSessionSurface() {
-        if((busy || connected) && configuredWidth>0 && configuredHeight>0 && root.width>0 && root.height>0) {
+        if(root.width<=0 || root.height<=0) return
+        if((busy || connected) && configuredWidth>0 && configuredHeight>0) {
+            val rotation=sessionRotation
+            if(rotation!=null) {
+                val target=rotation.target(root.width,root.height)
+                if(target!=rotation.current && rotation.pending<0) {
+                    val token=generation;rotation.pending=target
+                    val queued=controller?.showViewArea(target) {sent -> main.post {
+                        if(!destroyed && generation==token && sessionRotation===rotation) {
+                            rotation.pending=-1
+                            if(sent) {rotation.current=target;fitSessionSurface()}
+                            journal.event("display","rotation_area_result","index=$target sent=$sent")
+                        }
+                    }}==true
+                    if(!queued) rotation.pending=-1
+                }
+                val b=rotation.bounds(root.width,root.height)
+                videoViewport.layoutParams=FrameLayout.LayoutParams(b.viewportWidth,b.viewportHeight,android.view.Gravity.CENTER)
+                video.layoutParams=FrameLayout.LayoutParams(b.surfaceWidth,b.surfaceHeight,android.view.Gravity.TOP or android.view.Gravity.LEFT).apply {leftMargin=b.surfaceLeft;topMargin=b.surfaceTop}
+                return
+            }
             val scale=minOf(root.width.toFloat()/configuredWidth,root.height.toFloat()/configuredHeight)
             val width=(configuredWidth*scale).toInt().coerceAtLeast(1)
             val height=(configuredHeight*scale).toInt().coerceAtLeast(1)
-            video.layoutParams=FrameLayout.LayoutParams(width,height,android.view.Gravity.CENTER)
+            videoViewport.layoutParams=FrameLayout.LayoutParams(width,height,android.view.Gravity.CENTER)
+            video.layoutParams=FrameLayout.LayoutParams(width,height)
             journal.event("display","surface_fit","width=$width height=$height session_retained=true")
-        } else if(!busy && !connected) video.layoutParams=FrameLayout.LayoutParams(-1,-1)
+        } else if(!busy && !connected) {
+            videoViewport.layoutParams=FrameLayout.LayoutParams(-1,-1)
+            video.layoutParams=FrameLayout.LayoutParams(-1,-1)
+        }
     }
     private fun applyState() {
         ui.busy=busy;ui.stopping=stopping;ui.connected=connected
@@ -434,6 +475,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     override fun onConfigurationChanged(config:Configuration) {
         super.onConfigurationChanged(config)
+        if(previousOrientation in listOf(Configuration.ORIENTATION_PORTRAIT,Configuration.ORIENTATION_LANDSCAPE) && config.orientation in listOf(Configuration.ORIENTATION_PORTRAIT,Configuration.ORIENTATION_LANDSCAPE) && previousOrientation!=config.orientation) store.prefs.edit().putBoolean("rotating_window_seen",true).apply()
+        previousOrientation=config.orientation
         journal.event("display","configuration_changed","orientation=${config.orientation} widthDp=${config.screenWidthDp} heightDp=${config.screenHeightDp} density=${config.densityDpi} fontScale=${config.fontScale} night=${config.uiMode}")
         root.post {fitSessionSurface()}
     }
