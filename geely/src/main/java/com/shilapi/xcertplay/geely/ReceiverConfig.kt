@@ -1,6 +1,5 @@
 package com.shilapi.xcertplay.geely
 
-import java.net.NetworkInterface
 
 internal enum class ConnectionMode { CAR_HOTSPOT, SAME_LAN }
 internal data class ReceiverConfig(val mode: ConnectionMode, val ssid: String, val password: String, val networkInterface: String, val phone: String?) {
@@ -10,7 +9,6 @@ internal data class ReceiverConfig(val mode: ConnectionMode, val ssid: String, v
         require('\u0000' !in password) { "密码包含无效字符" }
         if (mode == ConnectionMode.CAR_HOTSPOT) {
             require(networkInterface.matches(Regex("[A-Za-z0-9_.:-]{1,32}"))) { "请输入网络接口，如 wlan0" }
-            require(NetworkInterface.getByName(networkInterface) != null) { "找不到接口 $networkInterface，请先开启车机热点并核对接口" }
         }
     }
     // Deliberately never include Wi-Fi credentials in generated diagnostics.

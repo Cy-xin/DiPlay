@@ -171,8 +171,8 @@ class ReceiverTest {
         }
         ReceiverConfig(ConnectionMode.SAME_LAN,"wifi","","",null).validate()
     }
-    @Test fun rejectsMissingManualInterfaceBeforeStartingHandshake() {
-        try { ReceiverConfig(ConnectionMode.CAR_HOTSPOT,"wifi","12345678","no_such_geely0",null).validate();fail() }
+    @Test fun rejectsInvalidManualInterfaceBeforeStartingHandshake() {
+        try { ReceiverConfig(ConnectionMode.CAR_HOTSPOT,"wifi","12345678","invalid interface",null).validate();fail() }
         catch(e:IllegalArgumentException) { assertTrue(e.message!!.contains("接口")) }
     }
     @Test fun switchingModesKeepsSeparateCredentialsAndOnlyTwoModes() {

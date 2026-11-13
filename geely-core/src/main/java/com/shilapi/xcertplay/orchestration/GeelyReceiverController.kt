@@ -1334,7 +1334,16 @@ class CarPlayController(
             if (isStaleWirelessRun(generation)) { manager.close(); throw java.io.InterruptedIOException("Cancelled") }
             hotspot = manager
         }
-        return manager.start(30_000L)
+        try {
+            return manager.start(if (config.wirelessHotspotMode == WirelessHotspotMode.MANUAL)
+                com.shilapi.xcertplay.network.WirelessStartupPolicy.HOTSPOT_READY_MILLIS else 30_000L)
+        } catch (failure: Exception) {
+            synchronized(wirelessResourceLock) {
+                if (hotspot === manager) hotspot = null
+            }
+            closeBestEffort("failed wireless hotspot") { manager.close() }
+            throw failure
+        }
     }
 
     private fun isStaleWirelessRun(generation: Int): Boolean =
