@@ -34,7 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.launch
 
-internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
+internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
     var audit:(String,String)->Unit={_,_->}
@@ -55,6 +55,7 @@ internal class ReceiverUiState {
     var fps by mutableIntStateOf(30)
     var quality by mutableIntStateOf(100)
     var carPlaySize by mutableIntStateOf(100)
+    var dockPosition by mutableIntStateOf(0)
     var displayApplied by mutableStateOf("")
     var timingReport by mutableStateOf("")
     var reconnectNeeded by mutableStateOf(false)
@@ -83,7 +84,7 @@ internal class ReceiverUiState {
 @Composable internal fun ReceiverApp(
     ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,
     onBluetooth:()->Unit,onPhone:()->Unit,onPhoneSelected:(String?,String)->Unit,
-    onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
+    onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onDock:(Int)->Unit,onFullscreen:(Boolean)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit,onLogs:()->Unit,
 ) {
     val context=LocalContext.current
     val appearance=remember { ReceiverAppearance(context) }
@@ -120,7 +121,7 @@ internal class ReceiverUiState {
                     }
                 }
             }
-            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onUpload,onPairUpload)
+            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onDock,onUpload,onPairUpload)
         }
     }
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
@@ -323,6 +324,7 @@ internal class ReceiverUiState {
                     if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
                     if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
                     if(matches(playback,"界面大小","图标","缩放","size","scale")) {found=true;SettingsRow(tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"),"${ui.carPlaySize}% · "+tr("下次连接生效","Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.SIZE}}
+                    if(matches(playback,"菜单栏","位置","dock","position")) {found=true;SettingsRow(tr("CarPlay 菜单栏位置","CarPlay dock position"),ReceiverDockPosition.from(ui.dockPosition).title+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.DOCK}}
                     if(matches(playback,"画面信息","display" ) && ui.displayApplied.isNotBlank()) {found=true;Text(ui.displayApplied,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     if(matches(appearance,"主题","theme","浅色","深色","系统")) {
                         found=true;section(appearance)
@@ -389,7 +391,7 @@ internal class ReceiverUiState {
     }
 }
 
-@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
+@Composable private fun ReceiverDialogs(ui:ReceiverUiState,onPhone:(String?,String)->Unit,onPlayback:(Boolean,Int)->Unit,onDisplay:(Boolean,Int)->Unit,onDock:(Int)->Unit,onUpload:(Boolean)->Unit,onPairUpload:(String)->Unit) {
     val dialog=ui.dialog ?: return
     if(dialog==ReceiverDialog.DIAGNOSTICS) return
     if(dialog==ReceiverDialog.PAIR_UPLOAD) {
@@ -408,6 +410,21 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
             text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
+        return
+    }
+    if(dialog==ReceiverDialog.DOCK) {
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr("CarPlay 菜单栏位置","CarPlay dock position"))},text={
+            Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
+                Text(tr("下次连接生效。自动模式：竖屏在底部，横屏在左侧，旋转时不断连。右侧选项采用 CarPlay 右舵布局，部分面板也会换边。","Applies next connection. Auto: bottom in portrait, left in landscape, without disconnecting on rotation. Right uses CarPlay's right-hand-drive layout and may move other panels too."),fontSize=14.sp)
+                ReceiverDockPosition.entries.forEach {dock ->
+                    val selected=ui.dockPosition==dock.value
+                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {onDock(dock.value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected,null,enabled=ui.displayEditable)
+                        Text(tr(dock.title,when(dock) {ReceiverDockPosition.AUTO->"Auto: portrait bottom / landscape left";ReceiverDockPosition.LEFT->"Left";ReceiverDockPosition.BOTTOM->"Bottom";ReceiverDockPosition.RIGHT->"Right"}),fontSize=16.sp)
+                    }
+                }
+            }
+        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("取消","Cancel"))}})
         return
     }
     if(dialog==ReceiverDialog.QUALITY || dialog==ReceiverDialog.SIZE) {

@@ -5,10 +5,13 @@ import com.shilapi.xcertplay.airplay.AirPlayViewArea
 import kotlin.math.roundToInt
 
 /** The original turning-screen square canvas, restricted to two full-screen areas. */
-internal class ReceiverRotationPlan(val display:AirPlayDisplayConfig) {
+internal class ReceiverRotationPlan(val display:AirPlayDisplayConfig,val dock:ReceiverDockPosition=ReceiverDockPosition.AUTO) {
     var current=display.initialViewArea
     var pending=-1
-    fun target(width:Int,height:Int)=if(width>=height) 0 else 1
+    fun target(width:Int,height:Int):Int {
+        val portrait=height>width
+        return (if(portrait) 2 else 0)+(if(dock.edge(portrait)==com.shilapi.xcertplay.airplay.AirPlayInfoPlist.DOCK_EDGE_BOTTOM) 1 else 0)
+    }
     data class Bounds(val viewportWidth:Int,val viewportHeight:Int,val surfaceWidth:Int,val surfaceHeight:Int,val surfaceLeft:Int,val surfaceTop:Int)
     fun bounds(width:Int,height:Int):Bounds {
         val area=display.viewAreas!![current]
@@ -20,13 +23,19 @@ internal class ReceiverRotationPlan(val display:AirPlayDisplayConfig) {
     companion object {
         fun enabled(portrait:Boolean,observedTurn:Boolean,accelerometer:Boolean,automotive:Boolean,fixedGeely:Boolean)=
             portrait || observedTurn || (accelerometer && !automotive && !fixedGeely)
-        fun build(base:AirPlayDisplayConfig,windowWidth:Int,windowHeight:Int,side:Int):ReceiverRotationPlan {
+        fun build(base:AirPlayDisplayConfig,windowWidth:Int,windowHeight:Int,side:Int,dock:ReceiverDockPosition=ReceiverDockPosition.AUTO):ReceiverRotationPlan {
             require(side>=2 && windowWidth>0 && windowHeight>0)
             val even=side/2*2
             val (landscape,portrait)=ReceiverTurningCanvas.turningAreas(even,windowWidth,windowHeight,windowWidth,windowHeight)
+            val areas=listOf(landscape,portrait).flatMap {(width,height) ->
+                listOf(com.shilapi.xcertplay.airplay.AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE,com.shilapi.xcertplay.airplay.AirPlayInfoPlist.DOCK_EDGE_BOTTOM).map {edge ->
+                    AirPlayViewArea(width.coerceAtLeast(2),height.coerceAtLeast(2),dockEdge=edge)
+                }
+            }
+            val isPortrait=windowHeight>windowWidth
+            val initial=(if(isPortrait) 2 else 0)+(if(dock.edge(isPortrait)==com.shilapi.xcertplay.airplay.AirPlayInfoPlist.DOCK_EDGE_BOTTOM) 1 else 0)
             return ReceiverRotationPlan(base.copy(widthPixels=even,heightPixels=even,viewArea=null,safeArea=null,
-                viewAreas=listOf(AirPlayViewArea(landscape.first.coerceAtLeast(2),landscape.second.coerceAtLeast(2)),AirPlayViewArea(portrait.first.coerceAtLeast(2),portrait.second.coerceAtLeast(2))),
-                initialViewArea=if(windowWidth>=windowHeight) 0 else 1))
+                viewAreas=areas,initialViewArea=initial),dock)
         }
     }
 }

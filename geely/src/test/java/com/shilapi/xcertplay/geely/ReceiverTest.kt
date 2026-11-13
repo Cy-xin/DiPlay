@@ -85,7 +85,7 @@ class ReceiverTest {
         fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
         set("connected",true);set("busy",true);set("configuredWidth",1280);set("configuredHeight",720)
         invoke(activity,"applyState");val generation=field(activity,"generation")
-        activity.saveDisplayPreference(true,125);activity.saveDisplayPreference(false,85)
+        activity.saveDisplayPreference(true,125);activity.saveDisplayPreference(false,85);activity.saveDockPreference(ReceiverDockPosition.RIGHT.value)
         assertEquals(generation,field(activity,"generation"));assertTrue(activity.ui.connected)
         assertEquals(1280,field(activity,"configuredWidth"));assertEquals(720,field(activity,"configuredHeight"))
         assertEquals(125,activity.ui.quality);assertEquals(85,activity.ui.carPlaySize);assertTrue(activity.ui.reconnectNeeded)

@@ -9,11 +9,11 @@ class ReceiverRotationPlanTest {
     @Test fun portraitStartedSessionAdvertisesBothDirectionsOnOneSupportedCanvas() {
         val plan=ReceiverRotationPlan.build(AirPlayDisplayConfig(1350,3000,fps=60),1080,2400,1920)
         assertEquals(1920,plan.display.widthPixels);assertEquals(1920,plan.display.heightPixels)
-        assertEquals(1,plan.current)
+        assertEquals(3,plan.current)
         assertEquals(1920,plan.display.viewAreas!![0].width);assertEquals(864,plan.display.viewAreas!![0].height)
-        assertEquals(864,plan.display.viewAreas!![1].width);assertEquals(1920,plan.display.viewAreas!![1].height)
+        assertEquals(864,plan.display.viewAreas!![2].width);assertEquals(1920,plan.display.viewAreas!![2].height)
         val display=(AirPlayInfoPlist.build(receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1080,2400).copy(main=plan.display))["displays"] as List<*>).first() as Map<*,*>
-        assertEquals(2,(display["viewAreas"] as List<*>).size);assertEquals(1,display["initialViewArea"])
+        assertEquals(4,(display["viewAreas"] as List<*>).size);assertEquals(3,display["initialViewArea"])
     }
     @Test fun turnChangesVisibleViewportWithoutStretchingSquareOrRenegotiatingStream() {
         val plan=ReceiverRotationPlan.build(AirPlayDisplayConfig(1080,2400),1080,2400,1920)
@@ -34,6 +34,28 @@ class ReceiverRotationPlanTest {
             val y=(b.viewportHeight/2.0-b.surfaceTop)/b.surfaceHeight*plan.display.heightPixels
             assertEquals(area.width/2.0,x,1.0);assertEquals(area.height/2.0,y,1.0)
         }
+    }
+    @Test fun automaticDockFollowsOrientationAndManualPositionsKeepTheDeclaredEdge() {
+        val auto=ReceiverRotationPlan.build(AirPlayDisplayConfig(1080,2400),1080,2400,1920)
+        for((w,h) in listOf(1080 to 2400,2400 to 1080)) {
+            val area=auto.display.viewAreas!![auto.target(w,h)]
+            assertEquals(if(h>w) AirPlayInfoPlist.DOCK_EDGE_BOTTOM else AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE,area.dockEdge)
+        }
+        for(mode in listOf(ReceiverDockPosition.LEFT,ReceiverDockPosition.BOTTOM,ReceiverDockPosition.RIGHT)) {
+            val plan=ReceiverRotationPlan.build(AirPlayDisplayConfig(1080,2400),1080,2400,1920,mode)
+            for((w,h) in listOf(1080 to 2400,2400 to 1080)) assertEquals(mode.edge(h>w),plan.display.viewAreas!![plan.target(w,h)].dockEdge)
+        }
+    }
+    @Test fun rightDockUsesRealDrivingSideFlagRatherThanAnInventedThirdEdge() {
+        assertTrue(ReceiverDockPosition.RIGHT.rightHandDrive);assertFalse(ReceiverDockPosition.LEFT.rightHandDrive)
+        for(mode in ReceiverDockPosition.entries) {
+            val d=mode.singleDisplay(AirPlayDisplayConfig(1920,720))
+            val air=receiverAirPlayConfig(com.shilapi.xcertplay.airplay.AirPlayIdentity.generate(),1920,720).copy(main=d,rightHandDrive=mode.rightHandDrive)
+            val info=AirPlayInfoPlist.build(air)
+            assertEquals(mode==ReceiverDockPosition.RIGHT,info["rightHandDrive"])
+            assertTrue(d.viewAreas!!.single().dockEdge in listOf(AirPlayInfoPlist.DOCK_EDGE_BOTTOM,AirPlayInfoPlist.DOCK_EDGE_DRIVER_SIDE))
+        }
+        assertEquals(ReceiverDockPosition.AUTO,ReceiverDockPosition.from(-1))
     }
     @Test fun portableScreensEnableRotationButFixedGeelyDoesNotPayForSquareByDefault() {
         assertTrue(ReceiverRotationPlan.enabled(false,false,true,false,false))

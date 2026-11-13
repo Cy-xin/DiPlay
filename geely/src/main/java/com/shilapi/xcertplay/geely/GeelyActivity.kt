@@ -144,6 +144,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                         }
                     },
                     onDisplay=::saveDisplayPreference,
+                    onDock=::saveDockPreference,
                     onFullscreen={ hidden ->
                         if(ui.editable) {
                             journal.event("operation","system_bars_changed","hidden=$hidden");ui.hideSystemBars=hidden
@@ -169,11 +170,19 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.markReconnectNeeded();refreshPlaybackLabels()
         journal.event("operation","display_preference_saved","setting=${if(quality) "quality" else "size"} value=$saved next_connection=true")
     }
+    internal fun saveDockPreference(value:Int) {
+        if(!ui.displayEditable) return
+        val dock=ReceiverDockPosition.from(value)
+        store.prefs.edit().putInt("carplay_dock",dock.value).apply()
+        ui.markReconnectNeeded();refreshPlaybackLabels()
+        journal.event("operation","dock_preference_saved","mode=${dock.name} next_connection=true")
+    }
     private fun refreshPlaybackLabels() {
         ui.bufferMs=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         ui.fps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         ui.quality=ReceiverDisplaySettings.quality(store.prefs.getInt("display_quality",100))
         ui.carPlaySize=ReceiverDisplaySettings.size(store.prefs.getInt("carplay_ui_size",100))
+        ui.dockPosition=ReceiverDockPosition.from(store.prefs.getInt("carplay_dock",0)).value
     }
     private fun key(name: String) = "${mode.name}_$name"
     private fun loadInputs() {
@@ -230,6 +239,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         val displayQuality=ui.quality;val displaySize=ui.carPlaySize
+        val dock=ReceiverDockPosition.from(ui.dockPosition)
         secret=config.password
         val token=++generation
         busy=true;update("正在检查配置和认证资产…");applyState()
@@ -263,8 +273,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                 val rotating=rotationEnabled
                 val square=if(rotating) ReceiverTurningCanvas.squareSide(maxOf(display.display.widthPixels,display.display.heightPixels),ReceiverTurningCanvas.Picture.SMOOTHER,false) else null
                 require(height<=width || square!=null) {"当前设备不支持横竖切换画布，请将设备横屏后再连接。"}
-                val rotation= square?.let {ReceiverRotationPlan.build(display.display,width,height,it)}
-                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=rotation?.display ?: display.display)
+                val rotation= square?.let {ReceiverRotationPlan.build(display.display,width,height,it,dock)}
+                val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=rotation?.display ?: dock.singleDisplay(display.display),rightHandDrive=dock.rightHandDrive)
                 val pairs=store.pairings()
                 main.post {
                     if(destroyed || generation!=token) return@post
@@ -273,7 +283,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                         ui.reconnectNeeded=false
                         ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(rotation!=null) "（横竖屏旋转画布）" else if(display.fallback) "（设备能力限制，已回退）" else "")
                         store.prefs.edit().putString("last_display_summary",ui.displayApplied).apply()
-                        journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback} rotating=$rotating square=$square")
+                        journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback} rotating=$rotating square=$square dock=${dock.name} rightHandDrive=${dock.rightHandDrive}")
                         val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })

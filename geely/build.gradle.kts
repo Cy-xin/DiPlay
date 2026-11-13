@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 116
-        versionName = "0.6.1-geely-rotation"
+        versionCode = 117
+        versionName = "0.6.2-geely-dock"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {
