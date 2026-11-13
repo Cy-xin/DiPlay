@@ -1603,7 +1603,30 @@ class CarPlayController(
         }
 
     private fun configureBluetoothAudioHandoff(session: AirPlaySession, address: String, force: Boolean = false) {
-        // Playback uses normal Android AudioTrack and audio focus only.
+        if (!BluetoothAdapter.checkBluetoothAddress(address.uppercase(Locale.US))) return
+        mainHandler.post {
+            if (closed || activeSession !== session) return@post
+            if (factoryBluetoothSession === session) {
+                if (force) bluetoothAudioCommand = true
+                factoryBluetoothGuard?.setSuppressed(!bluetoothAudioOutput && (Build.MODEL.contains("KX11", ignoreCase = true) || bluetoothAudioOwnership || bluetoothAudioCommand))
+                return@post
+            }
+            val bonded = runCatching { currentBluetoothAdapter()?.bondedDevices?.any { it.address.equals(address, true) } == true }.getOrDefault(false)
+            if (!bonded) return@post
+            val previous = factoryBluetoothGuard
+            bluetoothAudioCommand = force
+            factoryBluetoothSession = session
+            onNativeBluetoothPlaying(false)
+            factoryBluetoothGuard = com.shilapi.xcertplay.vehicle.BluetoothAudioHandoff(appContext, address, ::debugLog,
+                onPlaying = if (bluetoothAudioOutput) { playing ->
+                    if (!closed && activeSession === session && factoryBluetoothSession === session) onNativeBluetoothPlaying(playing)
+                } else null,
+            ).also {
+                it.setSuppressed(!bluetoothAudioOutput && (Build.MODEL.contains("KX11", ignoreCase = true) || bluetoothAudioOwnership || force))
+                it.start()
+            }
+            previous?.close()
+        }
     }
 
     private fun <T : BluetoothProfile> connectedBluetoothDevices(

@@ -36,6 +36,6 @@ for line in mapping.splitlines():
   if not target.startswith('R8$$REMOVED$$'):
    retained.append(original)
 for marker in ('.hud.', '.vehicle.', '.glance.', '.media.Ambient', '.network.WifiP2pGroupManager', '.network.LocalOnlyHotspotManager', '.network.CarHotspotTethering', '.transport.IphoneUsbHost', '.transport.Ch341Usb', '.network.CarPlayVpnService'):
- assert not any(marker in name for name in retained),f'Retained excluded implementation: {marker}'
+ assert not any(marker in name and not name.startswith("com.shilapi.xcertplay.vehicle.BluetoothAudioHandoff") for name in retained),f'Retained excluded implementation: {marker}'
 result={'package':'com.shihab.diplay','label':'DiPlay Geely','min_sdk':30,'target_sdk':30,'bytes':a.apk.stat().st_size,'sha256':hashlib.sha256(a.apk.read_bytes()).hexdigest(),'components':{'activities':1,'services':1,'receivers':0,'providers':0},'authentication':'Selected local files match APK assets; no key contents emitted','excluded_implementations':'R8 mapping check passed','physical_carplay':'NOT TESTED: real iPhone/head unit required'}
 a.output.write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n');print(json.dumps(result,ensure_ascii=False,indent=2))

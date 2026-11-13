@@ -1,5 +1,7 @@
 package com.shilapi.xcertplay.geely
 
+import android.os.Build
+import androidx.compose.ui.unit.Density
 import android.app.Activity
 import android.view.WindowInsetsController
 import androidx.activity.compose.BackHandler
@@ -39,6 +41,7 @@ internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
     var audit:(String,String)->Unit={_,_->}
     var refreshLocalLog:()->Unit={}
+    var exportLocalLog:()->Unit={}
     var uploadPaired by mutableStateOf(false)
     var uploadBusy by mutableStateOf(false)
     var pendingUpload by mutableStateOf(false)
@@ -93,6 +96,9 @@ internal class ReceiverUiState {
     val theme by appearance.mode.collectAsState(initial=null)
     val scope=rememberCoroutineScope()
     var themeError by remember { mutableStateOf(false) }
+    val density=LocalDensity.current
+    val vehicleScale=if(Build.MODEL.contains("KX11",ignoreCase=true)) 1.35f else 1f
+    CompositionLocalProvider(LocalDensity provides Density(density.density*vehicleScale,density.fontScale)) {
     ReceiverTheme(theme ?: ReceiverThemeMode.SYSTEM) {
         val dark=LocalReceiverDark.current
         SideEffect {
@@ -125,6 +131,7 @@ internal class ReceiverUiState {
             }
             ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onDock,onUpload,onPairUpload)
         }
+    }
     }
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
 }
@@ -391,6 +398,7 @@ internal class ReceiverUiState {
                     TextButton({clipboard.setText(androidx.compose.ui.text.AnnotatedString(ui.lastReport));ui.audit("report_id_copied","report=${ui.lastReport}")}) {Text(tr("复制诊断编号","Copy report ID"))}
                 }
                 TextButton({ui.audit("local_log_preview","");ui.refreshLocalLog();ui.dialog=ReceiverDialog.LOGS}) {Text(tr("查看本地记录","View local log"))}
+                TextButton({ui.exportLocalLog()},enabled=!ui.uploadBusy) {Text(tr("导出本地诊断文件","Export local diagnostics"))}
                 if(ui.uploadPaired) TextButton({ui.dialog=ReceiverDialog.PAIR_UPLOAD},enabled=!ui.uploadBusy) {Text(tr("重新配对日志服务器","Pair log server again"))}
             }
         }

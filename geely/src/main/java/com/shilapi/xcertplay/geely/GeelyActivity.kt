@@ -77,6 +77,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal=ReceiverDiagnostics.get(this)
         uploader=ReceiverDiagnosticUpload(applicationContext,journal)
         ui.audit={event,detail -> journal.event("operation",event,detail)}
+        ui.exportLocalLog={exportLocalDiagnostics()}
         ui.refreshLocalLog={uploadWorker.execute {
             val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
             main.post {if(!destroyed) ui.logs=text}
@@ -298,7 +299,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                         ui.displayApplied="请求画布：${air.main.widthPixels} × ${air.main.heightPixels} · ${air.main.fps} fps"+(if(rotation!=null) "（横竖屏旋转画布）" else if(display.fallback) "（设备能力限制，已回退）" else "")
                         store.prefs.edit().putString("last_display_summary",ui.displayApplied).apply()
                         journal.event("display","negotiation_plan","native=${width}x$height requestedQuality=$displayQuality requestedSize=$displaySize usedQuality=${display.quality} usedSize=${display.size} canvas=${air.main.widthPixels}x${air.main.heightPixels} fps=$videoFps fallback=${display.fallback} rotating=$rotating square=$square dock=${dock.name} rightHandDrive=${dock.rightHandDrive}")
-                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
@@ -479,6 +480,26 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("operation","diagnostics_open");ui.dialog=ReceiverDialog.DIAGNOSTICS
         uploadWorker.execute {val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
             main.post {if(!destroyed) {ui.logs=text;ui.pendingUpload=journal.pending()!=null;ui.uploadPaired=uploader.enrolled;ui.lastReport=uploader.lastReport}}
+        }
+    }
+    private fun exportLocalDiagnostics() {
+        if(ui.uploadBusy) return
+        ui.uploadBusy=true;ui.uploadMessage="正在导出脱敏日志…"
+        val issue=ui.issue
+        uploadWorker.execute {
+            val result=runCatching {
+                journal.event("operation","local_export_requested")
+                val bundle=journal.snapshot(issue)
+                val directory=File(requireNotNull(getExternalFilesDir(null)),"diagnostics-export").apply {check(isDirectory || mkdirs())}
+                val destination=File(directory,"DiPlay-"+bundle.name)
+                bundle.copyTo(destination,overwrite=true)
+                directory.listFiles().orEmpty().filter {it!=destination}.forEach {it.delete()}
+                destination.name
+            }
+            main.post {if(!destroyed) {
+                ui.uploadBusy=false
+                ui.uploadMessage=result.fold({"已导出：Android/data/$packageName/files/diagnostics-export/$it"},{"导出失败：请检查设备存储空间。"})
+            }}
         }
     }
     private fun networkDiagnostic() {
