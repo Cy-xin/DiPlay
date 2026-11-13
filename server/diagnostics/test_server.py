@@ -63,6 +63,7 @@ class IntakeTest(unittest.TestCase):
   status,page,headers=self.admin()
   self.assertEqual(200,status);self.assertIn('生成配对码',page)
   self.assertEqual('no-store',headers['Cache-Control'])
+  self.assertEqual('same-origin',headers['Referrer-Policy'])
   self.assertIn('HttpOnly',headers['Set-Cookie']);self.assertIn('Secure',headers['Set-Cookie'])
   self.assertIn("frame-ancestors 'none'",headers['Content-Security-Policy'])
  def test_admin_csrf_origin_expiry_and_bounds(self):

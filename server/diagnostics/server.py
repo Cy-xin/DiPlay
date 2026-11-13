@@ -136,7 +136,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control','no-store')
         self.send_header('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
         self.send_header('X-Content-Type-Options','nosniff')
-        self.send_header('Referrer-Policy','no-referrer')
+        # Keep same-origin form POST Origin intact; no referrer is sent cross-origin.
+        self.send_header('Referrer-Policy','same-origin')
         self.send_header('Set-Cookie','diplay_admin_csrf='+token+'; Path='+ADMIN+'; Secure; HttpOnly; SameSite=Strict; Max-Age=1200')
         self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
     def admin_authorized(self):
