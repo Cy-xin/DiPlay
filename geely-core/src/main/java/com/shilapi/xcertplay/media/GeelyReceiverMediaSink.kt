@@ -1136,6 +1136,7 @@ private class VideoDecoder(
                         is VideoJob.Config -> configureDecoder(job)
                         is VideoJob.Frame -> {
                             val backlog = queue.backlogAfterCurrent()
+                            stats.onQueuedFrame(System.nanoTime()-job.receivedNs,backlog.pendingFrames)
                             val overloaded = !referenceChain.needsKeyFrame && backlogRecovery.observe(
                                 System.nanoTime(), job.receivedNs,
                                 backlog.pendingFrames, backlog.newestPendingReceivedNs,

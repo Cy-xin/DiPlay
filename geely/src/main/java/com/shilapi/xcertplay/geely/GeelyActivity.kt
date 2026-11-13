@@ -81,6 +81,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.saveAudioMapping={role,value -> saveAudioMapping(role,value)}
         ui.resetAudioMappings={resetAudioMappings()}
         ui.refreshAudioOutputs={refreshAudioOutputs()}
+        ui.saveLowLatencyVideo={enabled ->
+            if(ui.displayEditable) {
+                store.prefs.edit().putBoolean("low_latency_video",enabled).apply()
+                ui.lowLatencyVideo=enabled;ui.markReconnectNeeded()
+                journal.event("display","low_latency_saved","enabled=$enabled next_connection=true")
+            }
+        }
         ui.refreshLocalLog={uploadWorker.execute {
             val text=runCatching {journal.recent()}.getOrDefault("日志暂时不可用")
             main.post {if(!destroyed) ui.logs=text}
@@ -211,6 +218,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("audio","output_mapping_reset","next_connection=true")
     }
     private fun refreshPlaybackLabels() {
+        ui.lowLatencyVideo=store.prefs.getBoolean("low_latency_video",false)
         ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.sanitize(store.prefs.getString(it.preference,null))}
         refreshAudioOutputs()
         ui.bufferMs=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
@@ -276,6 +284,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val mediaBuffer=ReceiverPlaybackSettings.sanitizeBuffer(store.prefs.getInt("media_buffer_ms",200))
         val videoFps=ReceiverPlaybackSettings.sanitizeFps(store.prefs.getInt("video_fps",30))
         val audioMappings=ui.audioMappings.toMap()
+        val lowLatencyVideo=ui.lowLatencyVideo
         val displayQuality=ui.quality;val displaySize=ui.carPlaySize
         val dock=ReceiverDockPosition.from(ui.dockPosition)
         secret=config.password
@@ -328,7 +337,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                             val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
                             journal.event("audio","output_mapping_plan","role=${role.name} choice=$choice bus=${bus ?: "system"} detected=${bus!=null && audioOutputs.any {it.address==bus}}")
                         }
-                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,audioOutputRoutes=audioRoutes,audioUsageOverrides=ReceiverAudioRouting.usages(audioMappings),wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,audioOutputRoutes=audioRoutes,audioUsageOverrides=ReceiverAudioRouting.usages(audioMappings),wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,vendorLowLatencyDecoder=lowLatencyVideo,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
@@ -498,7 +507,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
     private fun log(value:String) {
         val measurement=value.removePrefix("Video: ")
-        if(measurement.startsWith("video stats") || measurement.startsWith("output format requested=") || measurement.startsWith("audio stats ")) {
+        if(measurement.startsWith("decoder=") || measurement.startsWith("video stats") || measurement.startsWith("output format requested=") || measurement.startsWith("audio stats ")) {
             val token=generation
             main.post {if(!destroyed && token==generation && (busy || connected) && health.observe(measurement)) ui.runtimeHealth=health.describe()}
         }

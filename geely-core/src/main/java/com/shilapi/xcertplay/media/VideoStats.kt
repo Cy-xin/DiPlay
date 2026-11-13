@@ -19,6 +19,8 @@ internal class VideoStats(
     private var maxTouchLatencyNs = 0L
     private val decodeMicros = IntArray(1024)
     private var decodeSamples = 0
+    private var queueWaitMaxNs=0L
+    private var queuePeak=0
     private var late = 0
     private var pacingDelayNanos = 0L
 
@@ -38,6 +40,10 @@ internal class VideoStats(
         bytes += size
     }
 
+    @Synchronized fun onQueuedFrame(waitNs:Long,pendingFrames:Int) {
+        queueWaitMaxNs=maxOf(queueWaitMaxNs,waitNs.coerceAtLeast(0))
+        queuePeak=maxOf(queuePeak,pendingFrames.coerceAtLeast(0))
+    }
     @Synchronized fun onRendered() { rendered++ }
 
     @Synchronized fun onRecovery() { recoveries++ }
@@ -73,13 +79,13 @@ internal class VideoStats(
             received / seconds, rendered / seconds, maxArrivalGapNs / 1_000_000,
             (bytes * 8 / 1000 / seconds).toLong(), recoveries,
             touchAvgMs, maxTouchLatencyNs / 1_000_000, touchSamples, TouchLatencyProbe.maxSendNs / 1_000_000,
-        ) + decodeSummary()
+        ) + decodeSummary()+" queueMax=${queueWaitMaxNs/1_000_000}ms queuePeak=$queuePeak"
         TouchLatencyProbe.maxSendNs = 0
         Log.i(TAG, line)
         windowStartNs = now
         received = 0; rendered = 0; recoveries = 0; bytes = 0; maxArrivalGapNs = 0
         touchSamples = 0; touchLatencySumNs = 0; maxTouchLatencyNs = 0
-        decodeSamples = 0; late = 0
+        decodeSamples = 0; late = 0;queueWaitMaxNs=0;queuePeak=0
         return line
     }
 

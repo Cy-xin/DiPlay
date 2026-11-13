@@ -29,4 +29,15 @@ class ReceiverHealthTest {
         assertTrue(summary.contains("NAVIGATION：本机待播约 未知"))
         health.reset();assertFalse(health.describe().contains("1280x720"))
     }
+    @Test fun videoDiagnosticsSeparateQueueDecoderAndEstimatedTouchSamples() {
+        val health=ReceiverHealth()
+        health.observe("decoder=c2.qti.avc.decoder mime=video/avc vendorLowLatency=true outputThread=true")
+        health.observe("video stats rx=60.0fps shown=60.0fps kbps=8000 touch2frame avg=12ms max=20ms n=2 decode p50=15ms p90=25ms queueMax=70ms queuePeak=7")
+        val report=health.describe()
+        assertTrue(report.contains("c2.qti.avc.decoder"));assertTrue(report.contains("15ms / 25ms"))
+        assertTrue(report.contains("70ms"));assertTrue(report.contains("12ms（估计）"))
+        health.observe("video stats rx=0.2fps shown=0.2fps touch2frame avg=-1ms n=0")
+        assertTrue(health.describe().contains("等待样本"));assertFalse(health.describe().contains("-1ms"))
+        health.reset();assertFalse(health.describe().contains("c2.qti"))
+    }
 }

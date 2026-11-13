@@ -62,6 +62,8 @@ internal class ReceiverUiState {
     var phoneName by mutableStateOf("自动选择已配对的 iPhone")
     var bufferMs by mutableIntStateOf(200)
     var fps by mutableIntStateOf(30)
+    var lowLatencyVideo by mutableStateOf(false)
+    var saveLowLatencyVideo:(Boolean)->Unit={}
     var quality by mutableIntStateOf(100)
     var carPlaySize by mutableIntStateOf(100)
     var dockPosition by mutableIntStateOf(0)
@@ -349,6 +351,16 @@ internal class ReceiverUiState {
                         }
                         TextButton({ui.resetAudioMappings()},enabled=ui.displayEditable) {Text(tr("恢复默认音频映射","Reset audio mapping"))}
                         Text(tr("通道已检测不代表已成功切换；以连接诊断和实车音量效果为准。通话与铃声在本车配置中共用音量组。","Detection does not prove routing; verify diagnostics and actual volume behavior. Calls and ringtone share a volume group on this car."),fontSize=13.sp)
+                    }
+                    if(matches(playback,"低延迟","解码","latency","decoder")) {
+                        found=true
+                        Row(Modifier.fillMaxWidth().heightIn(min=64.dp),verticalAlignment=Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("低延迟解码（实验性）","Low-latency decoding (experimental)"),fontSize=15.sp)
+                                Text(tr("复用原版解码与独立输出线程，下次连接生效。开启后若画面异常可关闭恢复标准模式。","Uses upstream decoder tuning and a dedicated output thread. Applies next connection; switch off to restore standard mode if needed."),fontSize=13.sp)
+                            }
+                            Switch(ui.lowLatencyVideo,{ui.saveLowLatencyVideo(it)},enabled=ui.displayEditable)
+                        }
                     }
                     if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
                     if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}

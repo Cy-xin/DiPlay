@@ -289,4 +289,16 @@ class ReceiverTest {
         GeelyActivity::class.java.getDeclaredField("connected").apply {isAccessible=true}.set(activity,false)
         lifecycle.pause().stop().destroy()
     }
+    @Test fun lowLatencySettingDefaultsOffAndSavesWithoutDisconnecting() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        assertFalse(activity.ui.lowLatencyVideo)
+        val token=field(activity,"generation")
+        activity.ui.connected=true
+        activity.ui.saveLowLatencyVideo(true)
+        assertTrue(activity.ui.lowLatencyVideo);assertTrue(activity.ui.reconnectNeeded)
+        activity.resetAudioMappings();assertTrue(activity.ui.lowLatencyVideo)
+        assertEquals(token,field(activity,"generation"));assertNull(field(activity,"controller"))
+        activity.ui.saveLowLatencyVideo(false);assertFalse(activity.ui.lowLatencyVideo)
+        lifecycle.pause().stop().destroy()
+    }
 }
