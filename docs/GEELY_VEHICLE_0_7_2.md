@@ -22,6 +22,8 @@ R8 verification now permits only BluetoothAudioHandoff (and its nested classes) 
 
 ## Physical follow-up
 
-0.7.2 (versionCode 121) installed with data preserved. The same KX11_A2 reconnected and showed CarPlay music playing. Bluetooth dump changed from one connected A2DP sink peer before the fix to Devices Tracked = 0 while CarPlay remained active. The owner explicitly confirmed continuous music playback without the previous repeated pauses. Navigation-plus-music and longer driving sessions remain separate checks; the effect on map interaction is pending user feedback. Actual head-unit screenshots confirmed the 35% larger DiPlay controls; iOS-drawn CarPlay UI was not scaled or cropped.
+0.7.2 (versionCode 121) installed with data preserved. The same KX11_A2 reconnected and showed CarPlay music playing. Bluetooth dump changed from one connected A2DP sink peer before the fix to Devices Tracked = 0 while CarPlay remained active. The owner explicitly confirmed continuous music playback without the previous repeated pauses. Navigation-plus-music and longer driving sessions remain separate checks; the owner subsequently confirmed map dragging/app switching was markedly improved and usable. Actual head-unit screenshots confirmed the 35% larger DiPlay controls; iOS-drawn CarPlay UI was not scaled or cropped.
 
 All required repository checks, 41 app tests and 53 core tests passed; APK signature/authentication assets/retained component checks passed. APK SHA-256: ebf05ea8aea61faef0f6fbf84821df9673d0d4bc8e007d09915bb6261313e2cf.
+
+Owner follow-up: explicitly confirmed both continuous music playback and noticeably improved, usable map interaction on this head unit. No quantitative 60fps or long-duration road-test claim is made.
