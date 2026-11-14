@@ -55,6 +55,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var foreground = false
     private var generation = 0
     private var destroyed = false
+    private var pictureRecovery = ReceiverPictureRecovery(main,
+        eligible = { connected && foreground && !stopping && !destroyed && ui.showCarPlay && currentSurface?.isValid == true },
+        rendered = { sink?.liveVideoCounters()?.rendered ?: -1L },
+        refresh = { sink?.refreshPicture(110) },
+        report = {event,detail -> journal.event("video",event,detail)},
+    )
+    private fun restorePicture(reason:String) {pictureRecovery.start(currentSurface,reason)}
     private var pendingPermissions = false
     private var timeout: Runnable? = null
     private var secret = ""
@@ -153,10 +160,10 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             if(right-left!=oldRight-oldLeft || bottom-top!=oldBottom-oldTop) root.post {if(!destroyed) fitSessionSurface()}
         }
         video.holder.addCallback(object: SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface) }
+            override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface);restorePicture("surface_created") }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format")}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                journal.event("video","surface_destroyed");currentSurface=null
+                journal.event("video","surface_destroyed");pictureRecovery.stop();currentSurface=null
                 // Upstream's bounded detach handshake must complete before Surface destruction returns.
                 sink?.beginSurfaceDetach(holder.surface, connected)?.await()
             }
@@ -443,6 +450,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     internal fun showReceiverHome() {
         if(!connected) return
+        pictureRecovery.stop()
         ui.showCarPlay=false;ui.settingsOpen=false;ui.dialog=null
         update("CarPlay 已连接。可返回画面，或主动断开连接。")
         journal.event("operation","receiver_home_shown","session_retained=true")
@@ -450,7 +458,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun showCarPlay() {
         if(!connected) return
         ui.showCarPlay=true;ui.settingsOpen=false;ui.dialog=null
-        root.post {fitSessionSurface()}
+        root.post {if(!destroyed) {fitSessionSurface();restorePicture("carplay_shown")}}
         journal.event("operation","carplay_shown","session_retained=true")
     }
     internal fun disconnectFromNotification() {if(!destroyed && !stopping) endAttempt("已主动断开，可重新连接。");else stopService(Intent(this,ReceiverSessionService::class.java))}
@@ -473,6 +481,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
         stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
+        pictureRecovery.stop()
         ui.showCarPlay=false;sessionRotation=null
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
@@ -624,7 +633,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             journal.event("touch","app_touch","action=${event.actionMasked} pointers=${event.pointerCount} settings=${ui.settingsOpen} dialog=${ui.dialog}")
         return super.dispatchTouchEvent(event)
     }
-    override fun onResume() {super.onResume();journal.event("lifecycle","resume")}
+    override fun onResume() {super.onResume();journal.event("lifecycle","resume");root.post {if(!destroyed) restorePicture("resume")}}
     override fun onPause() {journal.event("lifecycle","pause");super.onPause()}
     override fun onStart() { super.onStart();foreground=true;journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
@@ -632,8 +641,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
+        pictureRecovery.stop()
         ++audioTestGeneration;stopAudioTest()
         cancelRecovery();saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
         journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()

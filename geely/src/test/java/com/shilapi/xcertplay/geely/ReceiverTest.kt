@@ -62,6 +62,34 @@ class ReceiverTest {
         (field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
         shadowOf(Looper.getMainLooper()).idle();lifecycle.pause().stop().destroy()
     }
+    @Test fun returnRequestsPictureWithoutReconnectingAndHomeCancelsRetries() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        val activity=lifecycle.get()
+        fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
+        set("connected",true);set("busy",true);invoke(activity,"applyState")
+        val texture=android.graphics.SurfaceTexture(0)
+        val surface=android.view.Surface(texture)
+        set("currentSurface",surface)
+        var requested=0
+        val recovery=ReceiverPictureRecovery(android.os.Handler(Looper.getMainLooper()),
+            {activity.ui.showCarPlay}, {0L}, {requested++}, {_,_->})
+        set("pictureRecovery",recovery)
+        val generation=field(activity,"generation")
+        invoke(activity,"showCarPlay")
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(requested>0)
+        val atReturn=requested
+        activity.showReceiverHome()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+        assertEquals(atReturn,requested)
+        assertEquals(generation,field(activity,"generation"))
+        assertTrue(activity.ui.connected)
+        activity.disconnectFromNotification()
+        (field(activity,"worker") as ExecutorService).submit {}.get(5,TimeUnit.SECONDS)
+        shadowOf(Looper.getMainLooper()).idle()
+        lifecycle.pause().stop().destroy();surface.release();texture.release()
+    }
+
     @Test fun hostResolutionChangeFitsTheExistingSessionInsteadOfDisconnecting() {
         val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
         fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
