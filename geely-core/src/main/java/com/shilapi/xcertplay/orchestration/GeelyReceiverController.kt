@@ -795,6 +795,8 @@ class CarPlayController(
                         receiveDiagnostics.snapshot()
                 },
                 log = { message -> if (!isStaleWirelessRun(generation)) debugLog(message) },
+                // Reuse the existing observer; live sampling reads only bounded counters.
+                activeSample = { receiveDiagnostics.snapshot() },
             )
             wirelessDiagnostics = diagnostics
             onStatus(
@@ -1157,7 +1159,6 @@ class CarPlayController(
                 if (isStaleWirelessRun(generation) || !watchdog.sessionEstablished()) return
                 wirelessDiagnostics?.let {
                     it.sessionActive()
-                    it.close()
                 }
                 wirelessConnectionProof.activate(generation, session)
                 // Keep wirelessActiveReported false until maybeCompleteWirelessHandoff() closes
@@ -1361,6 +1362,12 @@ class CarPlayController(
         config.wirelessBluetoothDeviceAddress?.let { selected ->
             return bonded.firstOrNull { it.address.equals(selected, ignoreCase = true) }
                 ?: throw IOException("The selected iPhone is no longer paired. Choose it again in DiPlay.")
+        }
+        // The existing fallback selects the sole bonded device regardless of its name.
+        // A renamed iPhone needs no two-profile query (up to six seconds) to reach it.
+        if (bonded.size == 1) {
+            debugLog("wireless single paired device selected; profile lookup skipped")
+            return bonded.single()
         }
         val iPhones = bonded.filter { device ->
             device.name?.contains("iPhone", ignoreCase = true) == true

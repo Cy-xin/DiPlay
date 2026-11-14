@@ -18,6 +18,8 @@ internal class StreamReceiveStats(
     private var lastReceivedNs = 0L
     private var maxInterArrivalNs = 0L
     private var maxProcessNs = 0L
+    private var lastProcessedNs: Long? = null
+    private var maxLoopGapNs = 0L
     private var lastTimestamp: Int? = null
     private var nextSequence: Int? = null
     private var forwardGapPackets = 0
@@ -31,7 +33,11 @@ internal class StreamReceiveStats(
     private var decryptSumNs = 0L
     private var maxDecryptNs = 0L
 
-    fun reading() { readStart = nowNs() }
+    fun reading() {
+        readStart = nowNs()
+        // Includes reporting overhead and time descheduled between receive iterations.
+        lastProcessedNs?.let { maxLoopGapNs = maxOf(maxLoopGapNs, readStart - it) }
+    }
 
     fun received(size: Int, sequence: Int? = null, timestamp: Int? = null) {
         processingStart = nowNs()
@@ -76,7 +82,9 @@ internal class StreamReceiveStats(
     }
 
     fun processed() {
-        maxProcessNs = maxOf(maxProcessNs, nowNs() - processingStart)
+        val now = nowNs()
+        maxProcessNs = maxOf(maxProcessNs, now - processingStart)
+        lastProcessedNs = now
         flush()
     }
 
@@ -84,7 +92,7 @@ internal class StreamReceiveStats(
         val now = nowNs()
         if (!ended && now - windowStart < 5_000_000_000L) return
         runCatching { report("Receive: $label packets=$packets bytes=$bytes readMaxMs=${maxReadNs / 1_000_000} " +
-            "processMaxUs=${maxProcessNs / 1000} seqForwardGaps=$forwardGapPackets " +
+            "processMaxUs=${maxProcessNs / 1000} loopGapMaxMs=${maxLoopGapNs / 1_000_000} seqForwardGaps=$forwardGapPackets " +
             "lateOrDuplicate=$lateOrDuplicate interArrivalMaxMs=${maxInterArrivalNs / 1_000_000} " +
             "seqGapEvents=$sequenceGapEvents seqGapMax=$maxSequenceGap " +
             "seqGapLast=[$lastSequenceGap] seqGapAtMs=$lastSequenceGapAtMs ended=$ended " +
@@ -104,6 +112,7 @@ internal class StreamReceiveStats(
         seqMissingAfterReadOver250Ms = 0
         maxInterArrivalNs = 0
         maxProcessNs = 0
+        maxLoopGapNs = 0
         forwardGapPackets = 0
         sequenceGapEvents = 0
         maxSequenceGap = 0

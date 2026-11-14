@@ -22,6 +22,11 @@ internal class MediaClockTrim(
     private var lastSampleNs = 0L
     private var lastUpdateNs: Long? = null
     private var compressedBacklog = false
+    private var lowPcm = false
+
+    /** Count protected updates, not audio packets, for bounded diagnostics. */
+    var protectedUpdates = 0L
+        private set
 
     /** The playback rate last asked of the track, in Hz. */
     var rate = sampleRate
@@ -33,6 +38,7 @@ internal class MediaClockTrim(
         // Decoder backpressure is not evidence that the head unit's clock runs at a different
         // rate; do not teach the *next* music stream an artificial clock correction.
         compressedBacklog = compressedFrames > targetFrames
+        lowPcm = queuedFrames.coerceAtLeast(0L) < targetFrames / 2
         val buffered = queuedFrames.coerceAtLeast(0L) +
             compressedFrames.coerceIn(0L, sampleRate.toLong() * 16L)
         val error = (buffered - targetFrames).toDouble() / targetFrames
@@ -43,21 +49,37 @@ internal class MediaClockTrim(
         lastSampleNs = nowNs
     }
 
+    /** Between writes, brake only; an empty network interval must not teach clock drift. */
+    fun protectPcm(queuedFrames: Long): Int? {
+        if (targetFrames <= 0L || queuedFrames >= targetFrames / 2 || rate <= sampleRate) return null
+        protectedUpdates++
+        rate = sampleRate
+        return rate
+    }
+
     /** The playback rate to set now, or null to keep the current one. */
     fun rateDue(nowNs: Long): Int? {
-        val error = level ?: return null
+        val averagedError = level ?: return null
+        // A compressed burst is not playable PCM. Do not drain a depleted hardware
+        // queue faster while its decoder is catching up or the smoothed level is stale.
+        val error = if (lowPcm) minOf(averagedError, 0.0) else averagedError
         // Without new audio the level says nothing about the clocks: keep the trim as it is.
         if (nowNs - lastSampleNs > STALE_NS) return null
         val previousUpdate = lastUpdateNs
-        if (previousUpdate != null && nowNs - previousUpdate < UPDATE_NS) return null
+        // Safety braking must not wait a full second while a nearly empty track runs fast.
+        val braking = lowPcm && rate > sampleRate
+        if (!braking && previousUpdate != null && nowNs - previousUpdate < UPDATE_NS) return null
         // A pause between updates is not drift: integrate at most one normal step over it.
         val seconds = if (previousUpdate == null) 0.0 else ((nowNs - previousUpdate) / 1e9).coerceAtMost(MAX_STEP_SECONDS)
         lastUpdateNs = nowNs
-        if (!compressedBacklog) {
+        if (!compressedBacklog && !braking) {
             integral = (integral + KI * error * seconds).coerceIn(-MAX_TRIM, MAX_TRIM)
             learnedTrim = integral
         }
-        val next = (sampleRate * (1.0 + (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
+        val correction = (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM)
+        val safeCorrection = if (lowPcm) minOf(correction, 0.0) else correction
+        if (lowPcm && KP * averagedError + integral > 0.0) protectedUpdates++
+        val next = (sampleRate * (1.0 + safeCorrection)).roundToInt()
         if (next == rate) return null
         rate = next
         return next

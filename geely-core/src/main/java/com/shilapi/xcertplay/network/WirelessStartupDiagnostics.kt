@@ -8,12 +8,14 @@ import java.net.NetworkInterface
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Observes startup without changing connection deadlines, address selection or retry behavior. */
+/** Observes startup and optional live counters without changing connection or retry behavior. */
 internal class WirelessStartupDiagnostics(
     private val sample: () -> String,
     private val log: (String) -> Unit,
     private val intervalMillis: Long = 10_000,
     private val nowNs: () -> Long = System::nanoTime,
+    private val activeSample: (() -> String)? = null,
+    private val activeIntervalMillis: Long = 30_000,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val startedNanos = nowNs()
@@ -27,7 +29,7 @@ internal class WirelessStartupDiagnostics(
     @Volatile private var lastSnapshot = ""
     private val worker = Thread(::observe, "diplay-wireless-diagnostics").apply { isDaemon = true }
 
-    init { require(intervalMillis > 0) }
+    init { require(intervalMillis > 0 && activeIntervalMillis > 0) }
 
     @Synchronized fun start() {
         if (!closed.get() && worker.state == Thread.State.NEW) worker.start()
@@ -73,14 +75,17 @@ internal class WirelessStartupDiagnostics(
     private fun observe() {
         try {
             while (!closed.get()) {
-                val snapshot = try { sample() } catch (error: Exception) {
+                val active = synchronized(this) { sessionActive }
+                val snapshot = try {
+                    if (active && activeSample != null) activeSample.invoke() else sample()
+                } catch (error: Exception) {
                     "sampling=unavailable failureClass=${error.javaClass.simpleName}"
                 }
                 if (closed.get()) return
                 lastSnapshot = snapshot
                 emit(summary())
                 emitSnapshot(snapshot)
-                Thread.sleep(intervalMillis)
+                Thread.sleep(if (active) activeIntervalMillis else intervalMillis)
             }
         } catch (_: InterruptedException) {
             // Teardown interrupts sleep or an in-flight Android callback wait.

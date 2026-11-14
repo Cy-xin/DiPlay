@@ -2658,16 +2658,20 @@ private class AudioRenderer(
         if (device?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) onRoutedToEarpiece?.invoke()
     }
 
-    private fun trimClock(track: AudioTrack) {
+    private fun trimClock(track: AudioTrack, safetyOnly: Boolean = false) {
         val trim = clockTrim ?: return
-        val now = System.nanoTime()
-        val compressedRtpFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample)
-            ?: 0L
-        val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
-            format.rtpClockRate.coerceAtLeast(1)
-        trim.sample(bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes,
-            now, compressedPcmFrames)
-        val rate = trim.rateDue(now) ?: return
+        val pcmFrames = bufferProgress.queuedBytes(track.playbackHeadPosition) / frameBytes
+        val rate = if (safetyOnly) {
+            trim.protectPcm(pcmFrames)
+        } else {
+            val now = System.nanoTime()
+            val compressedRtpFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample)
+                ?: 0L
+            val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
+                format.rtpClockRate.coerceAtLeast(1)
+            trim.sample(pcmFrames, now, compressedPcmFrames)
+            trim.rateDue(now)
+        } ?: return
         val result = runCatching { track.setPlaybackRate(rate) }.getOrDefault(AudioTrack.ERROR)
         if (result != AudioTrack.SUCCESS) {
             // The track keeps its rate; music then plays as it did before the trim.
@@ -2697,6 +2701,8 @@ private class AudioRenderer(
                 report("Audio: rebuffer paused audioType=${format.audioType} rebufferCount=$rebufferCount retainedMs=$retainedMs")
             }
         }
+        // Check draining PCM between bursts, without teaching network silence as clock drift.
+        if (playbackStarted) trimClock(track, safetyOnly = true)
         // A short final burst may never reach the start threshold. Play it after a bounded wait.
         if (!playbackStarted && prebufferBytes > 0 && queue.isEmpty() &&
             System.nanoTime() - lastPcmWriteNs >= BUFFER_TAIL_WAIT_NS) {
@@ -2743,6 +2749,14 @@ private class AudioRenderer(
             "playbackRate=${clockTrim?.rate ?: -1} ended=$force"
         Log.i(STATS_TAG, line)
         report(line)
+        clockTrim?.let { trim ->
+            val compressedFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample) ?: 0L
+            report("Audio: clock stats audioType=${format.audioType} " +
+                "pcmMs=${(queuedFrames ?: 0L) * 1000L / format.sampleRate.coerceAtLeast(1)} " +
+                "compressedMs=${compressedFrames * 1000L / format.rtpClockRate.coerceAtLeast(1)} " +
+                "targetMs=${startThresholdBytes * 1000L / bytesPerSecond.coerceAtLeast(1)} " +
+                "rate=${trim.rate} protectedUpdates=${trim.protectedUpdates} ended=$force")
+        }
         if (format.codec != AudioCodecKind.LPCM) {
             // Keep this separate: the exported diagnostic recorder caps each line at 700 characters.
             val decoderLine = "Audio: decoder stats audioType=${format.audioType} codec=${format.codec} " +
