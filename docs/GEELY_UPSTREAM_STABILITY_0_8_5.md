@@ -1,7 +1,7 @@
 # DiPlay Geely 0.8.5 — targeted upstream stability backports
 
 Local baseline: b1df279ed1d18547180b99c979b77869f77729bc (0.8.4).
-Branch: codex/geely-upstream-stability. Package: com.shihab.diplay; versionCode 127.
+Development branch: codex/geely-return-picture (continued in place). Package: com.shihab.diplay; versionCode 127.
 Official reference: shihabal3amri/DiPlay main, pinned to
 615b32ce0b40cd0b99ce94ba23a512001553684f (README: 0.2.22 public preview).
 Historical tagged baseline: v0.2.21, 49bf3bc2b011cb5ee7c7f4da9b99b18cbd3a23a2.
