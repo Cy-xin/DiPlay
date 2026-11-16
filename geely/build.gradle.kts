@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 128
-        versionName = "0.8.6-geely-audio-recovery"
+        versionCode = 129
+        versionName = "0.8.7-geely-efficiency"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

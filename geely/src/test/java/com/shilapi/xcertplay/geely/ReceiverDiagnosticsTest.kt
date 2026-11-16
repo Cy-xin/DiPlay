@@ -36,6 +36,21 @@ class ReceiverDiagnosticsTest {
         assertEquals(bundle,recorder.pending());assertTrue(bundle.exists())
         System.getenv("DIPLAY_DIAGNOSTIC_TEST_FIXTURE")?.let {java.io.File(it).writeBytes(bundle.readBytes())}
     }
+    @Test fun expiredLogsAreRemovedWhileRecentHistoryAndNewEventsRemain() {
+        val app=RuntimeEnvironment.getApplication() as android.app.Application
+        val directory=java.io.File(app.noBackupFilesDir,"diagnostics").apply {mkdirs()}
+        val expired=java.io.File(directory,"events-expired.jsonl").apply {
+            writeText("old history\n")
+            setLastModified(System.currentTimeMillis()-8*86400000L)
+        }
+        val recent=java.io.File(directory,"events-recent.jsonl").apply {writeText("recent history\n")}
+        val recorder=ReceiverDiagnostics.get(app)
+        recorder.event("operation","new_action");recorder.flush()
+        assertFalse(expired.exists())
+        assertTrue(recent.exists())
+        assertTrue(recorder.recent().contains("new_action"))
+    }
+
     @Test fun boundedJournalRollsFilesAndKeepsRecentActions() {
         val recorder=ReceiverDiagnostics.get(RuntimeEnvironment.getApplication())
         // Batches avoid overflowing the intentionally bounded asynchronous write queue.

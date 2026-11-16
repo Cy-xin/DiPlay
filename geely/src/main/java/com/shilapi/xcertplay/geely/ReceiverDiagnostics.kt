@@ -28,6 +28,7 @@ internal class ReceiverDiagnostics private constructor(private val context:Conte
         {r -> Thread(r,"DiPlay-Diagnostics").apply {isDaemon=true}},ThreadPoolExecutor.AbortPolicy())
     @Volatile var attempt=""
     @Volatile private var secrets=emptySet<String>()
+    private var nextPruneNs=0L
     private var active=File(directory,"events-${System.currentTimeMillis()}-${session.take(8)}.jsonl")
     init {
         event("app","process_start","version=${BuildConfig.VERSION_NAME} sdk=${Build.VERSION.SDK_INT} model=${Build.MODEL}")
@@ -50,10 +51,18 @@ internal class ReceiverDiagnostics private constructor(private val context:Conte
     }
     private fun files()=directory.listFiles {f->f.name.startsWith("events-") && f.extension=="jsonl"}.orEmpty().sortedBy {it.lastModified()}
     private fun write(record:String) {
-        if(active.length()>1024*1024) active=File(directory,"events-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jsonl")
+        val rotated=active.length()>1024*1024
+        if(rotated) active=File(directory,"events-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(8)}.jsonl")
         active.appendText(record+"\n")
-        val files=files()
-        files.filterIndexed {i,f -> i<files.size-8 || (f!=active && f.lastModified()<System.currentTimeMillis()-7*86400000L)}.forEach {it.delete()}
+        // Enforce the size cap on every rotation, but do not list/stat the entire
+        // directory for each protocol event. Idle time does not require a timer.
+        val now=SystemClock.elapsedRealtimeNanos()
+        if(rotated || now>=nextPruneNs) {
+            nextPruneNs=now+TimeUnit.MINUTES.toNanos(1)
+            val files=files()
+            val expiresBefore=System.currentTimeMillis()-7*86400000L
+            files.filterIndexed {i,f -> i<files.size-8 || (f!=active && f.lastModified()<expiresBefore)}.forEach {it.delete()}
+        }
     }
     fun foreground(active:Boolean) {
         prefs.edit().putBoolean("foreground_unfinished",active).apply()
@@ -112,15 +121,22 @@ internal class ReceiverDiagnostics private constructor(private val context:Conte
             }
             return current!!
         }
+        private val redactionPattern0=Regex("(?i)Bearer\\s+[^\\s,;]+")
+        private val redactionPattern1=Regex("(?i)[\"']?(password|passphrase|authorization|privateKey|pairingKey|token|secret|certificate)[\"']?\\s*[:=]\\s*\"[^\"]*\"")
+        private val redactionPattern2=Regex("-----BEGIN [\\s\\S]*?-----END [^-]+-----")
+        private val redactionPattern3=Regex("(?i)(password|passphrase|authorization|privateKey|publicKey|pairingKey|sessionKey|sharedSecret|signature|proof|deviceID|pairingID|identifier|ssid|hostName|access_token|token|certificate)\\s*[:=]\\s*[^\\s,;}]+")
+        private val redactionPattern4=Regex("(?i)\\b[0-9a-f]{2}(:[0-9a-f]{2}){5}\\b")
+        private val redactionPattern5=Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b")
+        private val redactionPattern6=Regex("[A-Za-z0-9+/]{100,}={0,2}")
         internal fun redactValue(value:String,secrets:Set<String>):String {
-            var s=value.replace(Regex("(?i)Bearer\\s+[^\\s,;]+"),"Bearer [redacted]")
+            var s=value.replace(redactionPattern0,"Bearer [redacted]")
             secrets.sortedByDescending {it.length}.forEach {s=s.replace(it,"[redacted]")}
-            s=s.replace(Regex("(?i)[\"']?(password|passphrase|authorization|privateKey|pairingKey|token|secret|certificate)[\"']?\\s*[:=]\\s*\"[^\"]*\""),"$1=[redacted]")
-            s=s.replace(Regex("-----BEGIN [\\s\\S]*?-----END [^-]+-----"),"[redacted credential]")
-            s=s.replace(Regex("(?i)(password|passphrase|authorization|privateKey|publicKey|pairingKey|sessionKey|sharedSecret|signature|proof|deviceID|pairingID|identifier|ssid|hostName|access_token|token|certificate)\\s*[:=]\\s*[^\\s,;}]+"),"$1=[redacted]")
-            s=s.replace(Regex("(?i)\\b[0-9a-f]{2}(:[0-9a-f]{2}){5}\\b"),"[device-address]")
-                .replace(Regex("\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b"),"[ip]")
-                .replace(Regex("[A-Za-z0-9+/]{100,}={0,2}"),"[redacted blob]")
+            s=s.replace(redactionPattern1,"$1=[redacted]")
+            s=s.replace(redactionPattern2,"[redacted credential]")
+            s=s.replace(redactionPattern3,"$1=[redacted]")
+            s=s.replace(redactionPattern4,"[device-address]")
+                .replace(redactionPattern5,"[ip]")
+                .replace(redactionPattern6,"[redacted blob]")
             return s
         }
     }
