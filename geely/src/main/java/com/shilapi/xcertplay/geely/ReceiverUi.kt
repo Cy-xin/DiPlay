@@ -1,5 +1,13 @@
 package com.shilapi.xcertplay.geely
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.os.Build
 import androidx.compose.ui.unit.Density
 import android.app.Activity
@@ -129,7 +137,12 @@ internal class ReceiverUiState {
             } else {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal=ReceiverTokens.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                        val page=when {
+                            ui.dialog in listOf(ReceiverDialog.DIAGNOSTICS,ReceiverDialog.PAIR_UPLOAD,ReceiverDialog.LOGS) -> 2
+                            ui.settingsOpen -> 1
+                            else -> 0
+                        }
+                        ReceiverPageMotion(page,Modifier.weight(1f).fillMaxWidth()) {
                             when {
                                 ui.dialog in listOf(ReceiverDialog.DIAGNOSTICS,ReceiverDialog.PAIR_UPLOAD,ReceiverDialog.LOGS) -> DiagnosticPage(ui,onUpload,onLogs)
                                 ui.settingsOpen -> SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
@@ -175,10 +188,15 @@ internal class ReceiverUiState {
             Row(Modifier.padding(5.dp).selectableGroup(),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
                 listOf(tr("连接","Connect"),tr("设置","Settings"),tr("诊断","Diagnostics")).forEachIndexed {i,label ->
                     val active=i==selected
-                    val color=if(active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    val color by animateColorAsState(
+                        if(active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        tween(ReceiverMotion.colorMs),label="tab ink")
+                    val fill by animateColorAsState(
+                        if(active) MaterialTheme.colorScheme.surface.copy(alpha=.68f) else Color.Transparent,
+                        tween(ReceiverMotion.colorMs),label="tab selection")
                     Surface(onClick={ui.audit("navigation_selected","tab=$i");ui.settingsOpen=i==1;ui.dialog=null;if(i==2) onLogs()},
                         modifier=Modifier.weight(1f).semantics {role=Role.Tab;this.selected=active},shape=CircleShape,
-                        color=if(active) MaterialTheme.colorScheme.surface.copy(alpha=.68f) else Color.Transparent) {
+                        color=fill) {
                         Row(Modifier.heightIn(min=48.dp).padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
                             CompositionLocalProvider(LocalContentColor provides color) {GlassIcon(i);Spacer(Modifier.width(8.dp));Text(label,fontSize=14.sp,fontWeight=if(active) FontWeight.SemiBold else FontWeight.Normal)}
                         }
@@ -275,10 +293,14 @@ internal class ReceiverUiState {
             name(Modifier.weight(1f));password(Modifier.weight(1f))
         } else { name(Modifier.fillMaxWidth());password(Modifier.fillMaxWidth()) }
         TextButton({advanced=!advanced;ui.audit("connection_advanced","expanded=$advanced")},Modifier.heightIn(min=48.dp)) {Text(tr("高级选项","Advanced options")+if(advanced) "  −" else "  +",fontSize=14.sp)}
-        if(advanced) {
+        AnimatedVisibility(advanced,
+            enter=expandVertically(tween(ReceiverMotion.expandMs,easing=ReceiverMotion.ease))+fadeIn(tween(160)),
+            exit=shrinkVertically(tween(ReceiverMotion.expandMs,easing=ReceiverMotion.ease))+fadeOut(tween(120))) {
+            Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             if(ui.mode==ConnectionMode.CAR_HOTSPOT) OutlinedTextField(ui.networkInterface,{ui.audit("field_edited","field=network_interface");ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
                 label={Text(tr("热点网络接口","Hotspot network interface"))},singleLine=true,shape=ReceiverTokens.control)
             Text(tr("已配对 iPhone 可在设置中选择。","Choose a paired iPhone in Settings."),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }
@@ -294,8 +316,9 @@ internal class ReceiverUiState {
         }
     }
     @Composable fun action(modifier:Modifier) {
+        val presses=remember {MutableInteractionSource()}
         Button({ ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary() },
-            modifier.heightIn(min=56.dp),enabled=!ui.stopping,shape=CircleShape) {
+            modifier.heightIn(min=56.dp).receiverPressMotion(presses),enabled=!ui.stopping,shape=CircleShape,interactionSource=presses) {
             Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.connected) tr("返回 CarPlay","Return to CarPlay") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
         }
     }
