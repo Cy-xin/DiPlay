@@ -83,6 +83,7 @@ internal class ReceiverUiState {
     var connected by mutableStateOf(false)
     var showCarPlay by mutableStateOf(false)
     var message by mutableStateOf("未连接。请先连接网络并配对蓝牙。")
+    var openVehicleHome:()->Unit={}
     var settingsOpen by mutableStateOf(false)
     var dialog by mutableStateOf<ReceiverDialog?>(null)
     var phoneChoices by mutableStateOf<List<Pair<String?,String>>>(emptyList())
@@ -205,6 +206,9 @@ internal class ReceiverUiState {
         Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                 Text("DiPlay Geely",Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
+                TextButton({ui.openVehicleHome()},Modifier.heightIn(min=48.dp)) {
+                    Text(tr("车机主页","Vehicle home"),fontSize=14.sp)
+                }
                 GlassSurface {Text(if(ui.connected) tr("已连接","Connected") else if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 16.dp)) {

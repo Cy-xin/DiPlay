@@ -112,6 +112,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         uploader=ReceiverDiagnosticUpload(applicationContext,journal)
         ui.audit={event,detail -> journal.event("operation",event,detail)}
         ui.exportLocalLog={exportLocalDiagnostics()}
+        ui.openVehicleHome={openVehicleHome()}
         ui.saveAudioMapping={role,value -> saveAudioMapping(role,value)}
         ui.resetAudioMappings={resetAudioMappings()}
         ui.refreshAudioOutputs={refreshAudioOutputs()}
@@ -429,7 +430,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             else -> Unit
         }
         when(state) {
-            is CarPlayStatus.Failed -> { log("连接失败: "+state.message);recoverOrEnd("连接失败："+friendlyFailure(state.message),ReceiverRecovery.transient(state.message)) }
+            is CarPlayStatus.Failed -> { log("连接失败: "+state.message);recoverOrEnd((if(connected) "CarPlay 连接已中断：" else "连接失败：")+friendlyFailure(state.message),ReceiverRecovery.transient(state.message)) }
             CarPlayStatus.WaitingForPairedIphone -> update("正在选择已配对 iPhone；请保持手机蓝牙开启。")
             CarPlayStatus.ConnectingBluetooth -> update("正在通过蓝牙完成首次认证与网络交接…")
             is CarPlayStatus.HotspotReady -> update("网络接口就绪，正在建立 CarPlay（尚未连接）。")
@@ -447,6 +448,18 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.timingReport=report
         store.prefs.edit().putString("last_connection_timing",report).apply()
         journal.event("connection","timing_result",report)
+    }
+    internal fun openVehicleHome() {
+        journal.event("operation","vehicle_home_pressed","session_retained=$connected")
+        try {
+            startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_:android.content.ActivityNotFoundException) {
+            // A vendor launcher may not expose a HOME activity; keep this task alive.
+            moveTaskToBack(true)
+        } catch (_:SecurityException) {
+            moveTaskToBack(true)
+        }
     }
     internal fun showReceiverHome() {
         if(!connected) return
@@ -471,6 +484,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         message.contains("bluetoothMac",true) -> "本机蓝牙标识无效，无法启动 CarPlay 握手。请查看本地诊断。"
         message.contains("Bluetooth",true) || message.contains("RFCOMM",true) -> "蓝牙握手失败；普通配对并不代表 CarPlay 握手成功。请查看本地诊断中的具体原因。"
         message.contains("SSID",true) || message.contains("configuration",true) -> "网络配置不匹配，请核对名称、密码和接口。"
+        message.contains("Hotspot interface or address changed",true) -> "热点地址在启动过程中发生变化，请等待原车热点稳定、确认 iPhone 已加入后重试。"
+        connected && message.contains("iAP2 link ended",true) -> "与 iPhone 的控制链路已结束，请确认手机仍连接车机热点，再重新连接。"
         message.contains("network changed",true) -> "Wi-Fi 已变化或断开，请恢复网络后重试。"
         else -> "未能完成 CarPlay 握手。请核对网络、蓝牙配对及手机授权；同一局域网还需允许设备互通和组播。详细阶段见本地诊断。"
     }

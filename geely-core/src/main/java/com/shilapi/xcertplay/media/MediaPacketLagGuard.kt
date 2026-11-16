@@ -28,6 +28,13 @@ internal class MediaPacketLagGuard(private val clockRate: Int) {
     ): Int {
         val durationFrames = pendingFrames(queue, newestSample, timestampOf)
         val delayNs = durationFrames * 1_000_000_000L / clockRate.coerceAtLeast(1)
+        // Once backlog is below the overload threshold, require a fresh sustained
+        // overload before evicting again. A catch-up burst is not ongoing congestion.
+        if (recovering && delayNs <= CONGESTION_THRESHOLD_NS) {
+            recovering = false
+            congestionSinceNs = 0
+            return 0
+        }
         if (!recovering) {
             if (delayNs <= CONGESTION_THRESHOLD_NS) {
                 congestionSinceNs = 0
