@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 131
-        versionName = "0.8.9-geely-clock-calibration"
+        versionCode = 132
+        versionName = "0.9.0-geely-navigation-focus"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

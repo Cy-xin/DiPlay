@@ -60,6 +60,8 @@ class AndroidMediaSink(
     private val audioFocusEnabled: Boolean = false,
     private val audioFocusAutoYield: Boolean = true,
     private val navigationMixEnabled: Boolean = false,
+    private val navigationFocusEnabled: Boolean = false,
+    private val navigationDuckVolume: Float = 0.2f,
     private val mediaChannel: Int = 0,
     private val navigationChannel: Int = 0,
     navigationAttenuationDb: Int = 0,
@@ -126,6 +128,8 @@ class AndroidMediaSink(
         factoryRouting = factoryAudio != null && !bluetoothOutput,
         unifiedMediaOutput = unifiedMediaOutput,
         navigationMixEnabled = navigationMixEnabled,
+        navigationFocusEnabled = navigationFocusEnabled,
+        navigationDuckVolume = navigationDuckVolume.coerceIn(0.1f,1f),
         onOwnershipChanged = { owned -> ownsAudio = owned; audioOwnershipListener?.invoke(owned) },
     )
 

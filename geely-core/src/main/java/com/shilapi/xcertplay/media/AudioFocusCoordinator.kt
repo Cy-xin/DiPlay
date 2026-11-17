@@ -21,6 +21,8 @@ internal class AudioFocusCoordinator(
     private val unifiedMediaOutput: Boolean = false,
     private val onOwnershipChanged: (Boolean) -> Unit = {},
     private val navigationMixEnabled: Boolean = false,
+    private val navigationFocusEnabled: Boolean = false,
+    private val navigationDuckVolume: Float = DUCKED_VOLUME,
 ) : Closeable {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes, var appliedVolume: Float = 1f) {
         val music = channel == AudioChannel.MEDIA && attributes.contentType != AudioAttributes.CONTENT_TYPE_SPEECH
@@ -47,6 +49,9 @@ internal class AudioFocusCoordinator(
     private var speechPlaying = false
     private val navigationDeadlines=LinkedHashMap<AudioTrack,Long>()
     private var navigationPlaying=false
+    private var navigationRequest: AudioFocusRequestCompat? = null
+    private var navigationGeneration=0
+    private var navigationFocusBlocked=false
     private var speechListener: ((Boolean) -> Unit)? = null
     private val vehicleRouting = factoryRouting || unifiedMediaOutput
     private var currentListener = listenerFor(requestGeneration)
@@ -129,13 +134,16 @@ internal class AudioFocusCoordinator(
         navigationDeadlines.entries.removeAll {it.value<=now}
         val guidance=navigationDeadlines.isNotEmpty()
         if(guidance!=navigationPlaying) {
-            navigationPlaying=guidance;applyVolumes()
-            runCatching {report("Audio: navigation overlay playing=$guidance mediaDuck=$DUCKED_VOLUME")}
+            navigationPlaying=guidance
+            if(!guidance) navigationFocusBlocked=false
+            applyVolumes()
+            runCatching {report("Audio: navigation overlay playing=$guidance mediaDuck=$navigationDuckVolume")}
         }
         speechDeadlines.entries.removeAll { it.value <= now }
         val playing = speechDeadlines.isNotEmpty()
-        if (playing == speechPlaying) return
+        if (playing == speechPlaying) {refreshNavigationFocus();return}
         speechPlaying = playing
+        refreshNavigationFocus()
         applyVolumes()
         runCatching { report("Audio: priority speech playing=$playing") }
         runCatching { speechListener?.invoke(playing) }
@@ -158,6 +166,7 @@ internal class AudioFocusCoordinator(
         if (assistant) addCapture(AudioChannel.ASSISTANT,
             if (Build.VERSION.SDK_INT >= 26) AudioAttributes.USAGE_ASSISTANT else AudioAttributes.USAGE_MEDIA)
         refreshRequest()
+        refreshNavigationFocus()
     }
     @Synchronized fun captureAllowed(): Boolean = !closed && (!enabled || focusHeld && !externalCall)
 
@@ -184,6 +193,7 @@ internal class AudioFocusCoordinator(
         if (closed || externalCall == active) return
         externalCall = active
         if (active) abandonRequest() else refreshRequest()
+        refreshNavigationFocus()
         applyVolumes()
         runCatching { report("Audio: external call owns route=$active") }
     }
@@ -197,11 +207,49 @@ internal class AudioFocusCoordinator(
     @Synchronized override fun close() {
         if (closed) return
         closed = true
+        abandonNavigationFocus()
         abandonRequest()
         active.clear(); captures.clear(); mediaAttributes = null
         speechDeadlines.clear(); speechPlaying = false; speechListener = null
         navigationDeadlines.clear();navigationPlaying=false
         publishOwnership(false)
+    }
+
+    /** Keep music focus; report actual guidance with its own short-lived usage request. */
+    private fun refreshNavigationFocus() {
+        val attributes=active.entries.firstOrNull {
+            it.key in navigationDeadlines && it.value.channel==AudioChannel.NAVIGATION &&
+                it.value.attributes.usage==AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE
+        }?.value?.attributes
+        if(!navigationFocusEnabled || !enabled || manager==null || !navigationPlaying ||
+            speechPlaying || captures.isNotEmpty() || externalCall || closed || attributes==null) {
+            abandonNavigationFocus()
+            return
+        }
+        if(navigationRequest!=null || navigationFocusBlocked) return
+        val generation=++navigationGeneration
+        val listener=AudioManager.OnAudioFocusChangeListener {change -> synchronized(this) {
+            if(closed || generation!=navigationGeneration || navigationRequest==null) return@synchronized
+            runCatching {report("Audio: navigation focus change=$change")}
+            if(change==AudioManager.AUDIOFOCUS_LOSS || change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+                navigationFocusBlocked=true
+                abandonNavigationFocus() // Do not fight another source by immediately reacquiring.
+            }
+        }}
+        val next=AudioFocusRequestCompat(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+            attributes,listener,Handler(Looper.getMainLooper()))
+        navigationRequest=next
+        val result=runCatching {manager?.let(next::request) ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED}.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        // One request per prompt, including denial; repeated PCM must not create a focus loop.
+        runCatching {report("Audio: navigation focus requested usage=${attributes.usage} granted=$result")}
+    }
+
+    private fun abandonNavigationFocus() {
+        val old=navigationRequest ?: return
+        navigationRequest=null
+        navigationGeneration++
+        runCatching {manager?.let(old::abandon)}
+        runCatching {report("Audio: navigation focus released")}
     }
 
     private fun abandonRequest() {
@@ -257,12 +305,19 @@ internal class AudioFocusCoordinator(
             active.forEach { (track, entry) ->
                 val volume = when {
                     entry.music && speechPlaying -> 0f
-                    entry.music -> (if(enabled && manager!=null) focusVolume else 1f) * (if(navigationPlaying) DUCKED_VOLUME else 1f)
+                    entry.music -> (if(enabled && manager!=null) focusVolume else 1f).let {
+                        if(navigationPlaying) minOf(it,navigationDuckVolume) else it
+                    }
                     else -> 1f
                 }
                 if (entry.appliedVolume != volume) {
                     val applied = runCatching { track.setStereoVolume(volume, volume) == AudioTrack.SUCCESS }.getOrDefault(false)
-                    if (applied) entry.appliedVolume = volume
+                    if (applied) {
+                        entry.appliedVolume = volume
+                        if(entry.music && navigationMixEnabled) runCatching {
+                            report("Audio: media mix gain=$volume guidance=$navigationPlaying speech=$speechPlaying focus=$focusVolume")
+                        }
+                    }
                 }
             }
             return
