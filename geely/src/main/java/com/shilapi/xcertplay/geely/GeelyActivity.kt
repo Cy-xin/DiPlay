@@ -32,6 +32,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private lateinit var journal: ReceiverDiagnostics
     private lateinit var uploader: ReceiverDiagnosticUpload
     private val uploadWorker=Executors.newSingleThreadExecutor()
+    private var preparation:ReceiverPreparation?=null
+    private var surfaceWork:ReceiverSurfaceWork?=null
     private lateinit var store: ReceiverStore
     private lateinit var root: FrameLayout
     internal val ui = ReceiverUiState()
@@ -44,6 +46,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var phoneName = "自动选择已配对的 iPhone"
     private var controller: CarPlayController? = null
     private var sink: AndroidMediaSink? = null
+    private val releasingSinks=java.util.concurrent.CopyOnWriteArraySet<AndroidMediaSink>()
     private var wheelKeys:ReceiverWheelKeys?=null
     private var wheelProbe:ReceiverWheelKeys?=null
     private var wheelDetectionTimeout:Runnable?=null
@@ -172,20 +175,21 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun buildUi() {
         root=FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        surfaceWork=ReceiverSurfaceWork({root.postOnAnimation(it)},{root.removeCallbacks(it)},
+            {token,surface -> !destroyed && foreground && token==generation && surface===currentSurface && (surface !is Surface || surface.isValid)},
+            {reason -> fitSessionSurface();if(reason!=null) restorePicture(reason)})
         videoViewport=FrameLayout(this).apply {clipChildren=true;clipToPadding=true}
         video=SurfaceView(this)
         videoViewport.addView(video,FrameLayout.LayoutParams(-1,-1))
         root.addView(videoViewport, FrameLayout.LayoutParams(-1,-1))
         root.addOnLayoutChangeListener {_,left,top,right,bottom,oldLeft,oldTop,oldRight,oldBottom ->
-            if(right-left!=oldRight-oldLeft || bottom-top!=oldBottom-oldTop) root.post {if(!destroyed) fitSessionSurface()}
+            if(right-left!=oldRight-oldLeft || bottom-top!=oldBottom-oldTop) requestSurfaceFit()
         }
         video.holder.addCallback(object: SurfaceHolder.Callback {
-            override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface);restorePicture("surface_created") }
+            override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface);requestSurfaceFit("surface_created") }
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format")}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                journal.event("video","surface_destroyed");pictureRecovery.stop();currentSurface=null
-                // Upstream's bounded detach handshake must complete before Surface destruction returns.
-                sink?.beginSurfaceDetach(holder.surface, connected)?.await()
+                detachSessionSurface(holder.surface)
             }
         })
         video.setOnTouchListener { view,event ->
@@ -430,10 +434,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         configuredWidth=width;configuredHeight=height
         val rotationEnabled=ReceiverRotationPlan.enabled(height>width,store.prefs.getBoolean("rotating_window_seen",false),
             packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_ACCELEROMETER),packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE),Build.MODEL.contains("KX11",true))
-        worker.execute {
+        val preparing=ReceiverPreparation();preparation=preparing
+        worker.execute {preparing.run {
             try {
                 require(audioTest?.awaitStopped(1500)!=false) {"音频测试尚未结束，请稍后重试。"}
+                if(preparing.isCancelled) return@run
                 config.validate();store.installAuthentication()
+                if(preparing.isCancelled) return@run
                 val identity=store.identity();val id=ReceiverStore.deviceId(identity)
                 val runtime=CarPlayRuntimeConfig(mfiTarget=MfiTarget.LOCAL, identification=Iap2IdentificationConfig("DiPlay Geely","KX11_A2","DiPlay","DIPLAY-"+id.replace(":",""),"0.1.0","1.0",0),
                     label="DiPlay Geely",hostName="diplay-"+id.replace(":","").lowercase(),hostMac=id.split(":").map { it.toInt(16).toByte() }.toByteArray(),
@@ -450,7 +457,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                 val air=receiverAirPlayConfig(identity,width,height,videoFps,receiverHomeIcons(applicationContext)).copy(main=rotation?.display ?: dock.singleDisplay(display.display),rightHandDrive=dock.rightHandDrive)
                 val pairs=store.pairings()
                 main.post {
-                    if(destroyed || generation!=token) return@post
+                    if(destroyed || generation!=token || preparing.isCancelled) return@post
                     try {
                         sessionRotation=rotation
                         ui.reconnectNeeded=false
@@ -467,7 +474,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
-                        controller=next;root.post {if(!destroyed) fitSessionSurface()};next.start()
+                        controller=next;requestSurfaceFit();next.start()
                     } catch(e:Exception) { log("启动失败: "+e.javaClass.simpleName);endAttempt("无法启动连接：请检查本地诊断并重试。") }
                 }
             } catch(e:Exception) {
@@ -476,12 +483,12 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     endAttempt(if(e is IllegalArgumentException) e.message ?: "配置无效" else "本地认证资产缺失或无效，无法启动 CarPlay。请使用已配置认证的 APK。")
                 } }
             }
-        }
+        } }
     }
     private fun listener(token:Int)=object:AirPlaySessionListener {
         @Volatile private var controlFailure:String?=null
         override fun onTcpAccepted(event:AirPlayTcpAccepted) {main.post {if(token==generation && !destroyed) timingStage(ReceiverConnectionTiming.Stage.HANDSHAKE)}}
-        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;root.post {fitSessionSurface()};timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
+        override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation && !destroyed) { currentAirPlaySession=session;requestSurfaceFit();timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
             connected=true;ui.showCarPlay=true;
             if(ReceiverAudioRouting.isGeely(Build.MODEL)) {
@@ -489,9 +496,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             }
             timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
-        override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) recoverOrEnd("iPhone 已断开，可重新连接。",controlFailure?.let(ReceiverRecovery::transient)==true) } }
-        override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) recoverOrEnd("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。",ReceiverRecovery.transient(message)) } }
-        override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) showReceiverHome() } }
+        override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && !destroyed && currentAirPlaySession===session) recoverOrEnd("iPhone 已断开，可重新连接。",controlFailure?.let(ReceiverRecovery::transient)==true) } }
+        override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation && !destroyed) recoverOrEnd("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。",ReceiverRecovery.transient(message)) } }
+        override fun onHostUiRequested(session:AirPlaySession) { main.post { if(token==generation && !destroyed && currentAirPlaySession===session) showReceiverHome() } }
         override fun onCommand(session:AirPlaySession,type:String,params:Map<String,Any?>) {
             if(token!=generation || type!="modesChanged") return
             val resources=(params["resources"] as? List<*>).orEmpty().filterIsInstance<Map<*,*>>().map { row ->
@@ -558,7 +565,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private fun showCarPlay() {
         if(!connected) return
         ui.showCarPlay=true;ui.settingsOpen=false;ui.dialog=null
-        root.post {if(!destroyed) {fitSessionSurface();restorePicture("carplay_shown")}}
+        requestSurfaceFit("carplay_shown")
         journal.event("operation","carplay_shown","session_retained=true")
     }
     internal fun disconnectFromNotification() {if(!destroyed && !stopping) endAttempt("已主动断开，可重新连接。");else stopService(Intent(this,ReceiverSessionService::class.java))}
@@ -584,36 +591,47 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
         stopService(Intent(this,ReceiverSessionService::class.java));ReceiverSessionService.detach(this)
-        pictureRecovery.stop()
+        surfaceWork?.cancel();pictureRecovery.stop()
         ui.showCarPlay=false;sessionRotation=null
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
         stopWheelDetection();wheelKeys?.close();wheelKeys=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
+        if(renderer!=null) releasingSinks+=renderer
+        val preparing=preparation;preparation=null;preparing?.cancel()
         // Cancellation must not wait behind the preparation worker or block the UI thread.
         Thread({
-            old?.close()
-            val mediaReleased=runCatching { renderer?.close() }.isSuccess
+            val transportCloseStarted=runCatching {old?.close()}.isSuccess
+            val mediaDone=java.util.concurrent.CompletableFuture<Boolean>()
+            val mediaCloseStarted=runCatching {renderer?.close()}.isSuccess
+            if(!mediaCloseStarted) mediaDone.complete(false)
+            else if(renderer==null) mediaDone.complete(true)
+            else renderer.whenVideoReleased {releasingSinks.remove(renderer);mediaDone.complete(true)}
             fun completeRelease(transportReleased:Boolean) {
-            val released=transportReleased && mediaReleased
-            journal.event("connection","resources_released","transport=$transportReleased media=$mediaReleased",if(released) "INFO" else "ERROR")
-            if (released) ReceiverSessionGate.release(lease)
-            main.post { if(!destroyed) {
-                stopping=!released
-                update(if(released) reason else "连接资源尚未释放，已阻止新任务。请在系统应用信息中强行停止本应用后重新打开。")
-                applyState()
-                if(released && retryDelay!=null && foreground) {
-                    recovering=true;ui.busy=true
-                    update(reason+"\n将在 ${retryDelay/1000} 秒后尝试恢复（${recovery.attempts}/2），可点击取消。")
-                    journal.event("connection","recovery_scheduled","attempt=${recovery.attempts} delayMs=$retryDelay")
-                    recoveryTask=Runnable {
-                        recoveryTask=null;recovering=false;ui.busy=false
-                        if(!destroyed && foreground && !stopping) connect()
-                    }.also {main.postDelayed(it,retryDelay)}
+                fun finished(mediaReleased:Boolean) {
+                    val released=transportReleased && mediaReleased
+                    journal.event("connection","resources_released","transport=$transportReleased media=$mediaReleased",if(released) "INFO" else "ERROR")
+                    if (released) ReceiverSessionGate.release(lease)
+                    main.post { if(!destroyed) {
+                        stopping=!released
+                        update(if(released) reason else "连接资源尚未释放，已阻止新任务。请在系统应用信息中强行停止本应用后重新打开。")
+                        applyState()
+                        if(released && retryDelay!=null && foreground) {
+                            recovering=true;ui.busy=true
+                            update(reason+"\n将在 ${retryDelay/1000} 秒后尝试恢复（${recovery.attempts}/2），可点击取消。")
+                            journal.event("connection","recovery_scheduled","attempt=${recovery.attempts} delayMs=$retryDelay")
+                            recoveryTask=Runnable {
+                                recoveryTask=null;recovering=false;ui.busy=false
+                                if(!destroyed && foreground && !stopping) connect()
+                            }.also {main.postDelayed(it,retryDelay)}
+                        }
+                    } }
                 }
-            } }
+                fun afterPreparation() {mediaDone.thenAccept {finished(it)}}
+                if(preparing==null) afterPreparation() else preparing.whenFinished {afterPreparation()}
             }
-            if(old==null || old.awaitClosed(8_000)) completeRelease(true)
+            if(!transportCloseStarted) completeRelease(false)
+            else if(old==null || old.awaitClosed(8_000)) completeRelease(true)
             else {
                 journal.event("connection","teardown_waiting","Transport is still closing; completion callback retained","WARN")
                 main.post {if(!destroyed) {update("正在释放连接，请稍候。完成后即可重新连接。");applyState()}}
@@ -622,8 +640,20 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         },"geely-session-release").apply {isDaemon=true;start()}
     }
 
+    internal fun detachSessionSurface(surface:Surface) {
+        journal.event("video","surface_destroyed")
+        val current=currentSurface===surface
+        if(current) {surfaceWork?.cancel();pictureRecovery.stop();currentSurface=null}
+        // Closing sinks still own native codecs until their actual release callback arrives.
+        val targets=(listOfNotNull(sink)+releasingSinks).distinct()
+        val started=android.os.SystemClock.elapsedRealtime()
+        val handoffs=targets.map {it.beginSurfaceDetach(surface,current && connected && it===sink)}
+        val released=handoffs.map {it.await()}.all {it}
+        journal.event("video","surface_detach_result","released=$released sinks=${targets.size} current=$current elapsedMs=${android.os.SystemClock.elapsedRealtime()-started}",if(released) "INFO" else "WARN")
+    }
+    private fun requestSurfaceFit(restore:String?=null) {surfaceWork?.request(generation,currentSurface,restore)}
     private fun fitSessionSurface() {
-        if(root.width<=0 || root.height<=0) return
+        if(destroyed || root.width<=0 || root.height<=0) return
         if((busy || connected) && configuredWidth>0 && configuredHeight>0) {
             val rotation=sessionRotation
             if(rotation!=null) {
@@ -633,7 +663,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     val queued=controller?.showViewArea(target) {sent -> main.post {
                         if(!destroyed && generation==token && sessionRotation===rotation) {
                             rotation.pending=-1
-                            if(sent) {rotation.current=target;fitSessionSurface()}
+                            if(sent) {rotation.current=target;requestSurfaceFit()}
                             journal.event("display","rotation_area_result","index=$target sent=$sent")
                         }
                     }}==true
@@ -657,7 +687,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun applyState() {
         ui.busy=busy;ui.stopping=stopping;ui.connected=connected
-        root.post {if(!destroyed) fitSessionSurface()}
+        requestSurfaceFit()
         if(connected && ui.showCarPlay) { ui.settingsOpen=false;ui.dialog=null }
     }
     private fun update(value:String) { message=value;ui.message=value;if(ui.settingsOpen) ui.notice=value;log(value) }
@@ -738,14 +768,14 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(previousOrientation in listOf(Configuration.ORIENTATION_PORTRAIT,Configuration.ORIENTATION_LANDSCAPE) && config.orientation in listOf(Configuration.ORIENTATION_PORTRAIT,Configuration.ORIENTATION_LANDSCAPE) && previousOrientation!=config.orientation) store.prefs.edit().putBoolean("rotating_window_seen",true).apply()
         previousOrientation=config.orientation
         journal.event("display","configuration_changed","orientation=${config.orientation} widthDp=${config.screenWidthDp} heightDp=${config.screenHeightDp} density=${config.densityDpi} fontScale=${config.fontScale} night=${config.uiMode}")
-        root.post {fitSessionSurface()}
+        requestSurfaceFit()
     }
     override fun dispatchTouchEvent(event:MotionEvent):Boolean {
         if(::journal.isInitialized && (!connected || !ui.showCarPlay) && event.actionMasked!=MotionEvent.ACTION_MOVE)
             journal.event("touch","app_touch","action=${event.actionMasked} pointers=${event.pointerCount} settings=${ui.settingsOpen} dialog=${ui.dialog}")
         return super.dispatchTouchEvent(event)
     }
-    override fun onResume() {super.onResume();journal.event("lifecycle","resume");root.post {if(!destroyed) restorePicture("resume")}}
+    override fun onResume() {super.onResume();journal.event("lifecycle","resume");requestSurfaceFit("resume")}
     override fun onPause() {journal.event("lifecycle","pause");super.onPause()}
     override fun onStart() { super.onStart();foreground=true;journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
@@ -753,11 +783,12 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { surfaceWork?.cancel();stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
-        pictureRecovery.stop()
+        surfaceWork?.cancel();pictureRecovery.stop()
         ++audioTestGeneration;stopAudioTest()
         cancelRecovery();saveInputs();if(!stopping && (controller!=null || busy)) endAttempt("应用已关闭")
+        surfaceWork?.cancel();surfaceWork=null
         journal.event("lifecycle","activity_destroy");uploadWorker.shutdown();destroyed=true;main.removeCallbacksAndMessages(null);worker.shutdown();super.onDestroy()
     }
 }

@@ -76,7 +76,7 @@ class ReceiverTest {
         set("pictureRecovery",recovery)
         val generation=field(activity,"generation")
         invoke(activity,"showCarPlay")
-        shadowOf(Looper.getMainLooper()).idle()
+        shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(32))
         assertTrue(requested>0)
         val atReturn=requested
         activity.showReceiverHome()
