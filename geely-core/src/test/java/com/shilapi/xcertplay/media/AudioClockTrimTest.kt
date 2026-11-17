@@ -99,6 +99,40 @@ class AudioClockTrimTest {
         assertEquals(0.0, MediaClockTrim.learnedTrim, 1e-8)
     }
 
+    @Test fun rendererAccountsOnlyForQueuedArrivalsSinceLastSampleAndIgnoresTimestampResets() {
+        val packet=Class.forName("com.shilapi.xcertplay.media.AudioRenderer\$AudioPacket")
+            .declaredConstructors.single().apply {isAccessible=true}
+        @Suppress("UNCHECKED_CAST")
+        val queue=get("queue") as java.util.concurrent.LinkedBlockingQueue<Any>
+        queue.add(packet.newInstance(ByteArray(12),0,900_000_000L))
+        queue.add(packet.newInstance(ByteArray(12),1024,1_800_000_000L))
+        // A concurrent producer can append after the consumer's snapshot time.
+        queue.add(packet.newInstance(ByteArray(12),2048,2_100_000_000L))
+        queue.add(packet.newInstance(ByteArray(12),1_000_000,1_900_000_000L))
+        val method=type.getDeclaredMethod("queuedFrameNsSince",Long::class.javaPrimitiveType,Long::class.javaPrimitiveType)
+            .apply {isAccessible=true}
+        assertEquals(1024.0*200_000_000L,method.invoke(renderer,1_000_000_000L,2_000_000_000L) as Double,1.0)
+        assertEquals(0.0,method.invoke(renderer,2_000_000_000L,2_000_000_000L) as Double,0.0)
+    }
+
+    @Test fun restartingPlaybackAndDiscardingPacketsRequireFreshCalibration() {
+        val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
+        fun calibrate() {
+            trim.measureAgain()
+            for(step in 0..40) trim.sample(24_000,1_000_000_000L+step*100_000_000L)
+            assertTrue(!trim.calibrating)
+        }
+        set("clockTrim",trim)
+        calibrate()
+        type.getDeclaredMethod("startPlayback",AudioTrack::class.java).apply {isAccessible=true}.invoke(renderer,track)
+        assertTrue(trim.calibrating)
+        calibrate()
+        (get("packetsDroppedTotal") as java.util.concurrent.atomic.AtomicInteger).incrementAndGet()
+        type.getDeclaredMethod("trimClock",AudioTrack::class.java,Boolean::class.javaPrimitiveType)
+            .apply {isAccessible=true}.invoke(renderer,track,false)
+        assertTrue(trim.calibrating)
+    }
+
     @Implements(AudioTrack::class)
     class RateTrack {
         @Implementation fun getPlaybackHeadPosition() = head

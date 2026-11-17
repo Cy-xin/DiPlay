@@ -53,6 +53,61 @@ class MediaClockTrimTest {
         }
     }
 
+    /**
+     * Wireless CarPlay: the iPhone sends about 0.4 s of music at once, every 0.4 s by its clock give or take
+     * 30 ms (#807, #976). The head unit's clock is accurate; playback starts once the target, and at least one
+     * burst, is queued.
+     */
+    private class BurstDrive(targetMs: Int, seed: Int = 7) {
+        val target = 48L * targetMs
+        val trim = MediaClockTrim(48_000, target)
+        val random = Random(seed)
+        var queued = maxOf(target, 19_200L).toDouble()
+        val starvedSeconds = mutableListOf<Int>()
+        val ratesAfterAMinute = mutableListOf<Int>()
+
+        fun run(seconds: Int) {
+            var rate = 48_000
+            var burst = 1
+            var nextBurstMs = 400.0
+            var played = 0.0
+            for (ms in 0 until seconds * 1000) {
+                val nowNs = ms * 1_000_000L
+                if (ms >= nextBurstMs) {
+                    queued += 19_200
+                    burst++
+                    nextBurstMs = burst * 400 + (random.nextDouble() - 0.5) * 60
+                    trim.sample(queued.toLong(), nowNs)
+                    trim.rateDue(nowNs)?.let { rate = it }
+                    if (ms >= 60_000) ratesAfterAMinute += rate
+                }
+                played += rate / 1000.0
+                while (played >= 1024) {
+                    played -= 1024
+                    if (queued >= 1024) queued -= 1024 else { starvedSeconds += ms / 1000; queued = 0.0 }
+                }
+            }
+        }
+    }
+
+    @Test fun overWiFiTheDefaultBufferIsNotPlayedFast() {
+        for (seed in 1..3) {
+            MediaClockTrim.learnedTrim = 0.0
+            val drive = BurstDrive(300, seed)
+            drive.run(300)
+            assertEquals("seed $seed starved at ${drive.starvedSeconds}", 0, drive.starvedSeconds.count { it >= 60 })
+            assertEquals("seed $seed", 48_000.0, drive.ratesAfterAMinute.average(), 20.0)
+            assertTrue("seed $seed max ${drive.ratesAfterAMinute.max()}", drive.ratesAfterAMinute.max() < 48_200)
+        }
+    }
+
+    @Test fun overWiFiALongerBufferAlsoSettlesAtTheIphonesClock() {
+        val drive = BurstDrive(1000)
+        drive.run(300)
+        assertEquals(emptyList<Int>(), drive.starvedSeconds)
+        assertEquals(48_000.0, drive.ratesAfterAMinute.average(), 20.0)
+    }
+
     @Test fun withoutTheTrimA076PercentFastHeadUnitRunsDryEveryMinuteOrSo() {
         val drive = Drive(0.0076, trimmed = false)
         drive.run(300)
@@ -201,6 +256,54 @@ class MediaClockTrimTest {
         repeat(100) { assertNull(trim.protectPcm(0)) }
         assertEquals(0.007, MediaClockTrim.learnedTrim, 1e-8)
         assertEquals(1L, trim.protectedUpdates)
+    }
+
+    @Test fun measuresSteadyBurstLevelInsteadOfTreatingStartThresholdAsTheTarget() {
+        val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
+        var queued=38_400.0 // 800ms burst peak, 600ms time-average level.
+        var rate=48_000
+        trim.sample(queued.toLong(),1_000_000_000L)
+        for(ms in 1..60_000) {
+            queued-=rate/1000.0
+            if(ms%400==0) {
+                queued+=19_200
+                val now=1_000_000_000L+ms*1_000_000L
+                trim.sample(queued.toLong(),now)
+                trim.rateDue(now)?.let {rate=it}
+            }
+        }
+        assertTrue(!trim.calibrating)
+        assertEquals(28_800.0,trim.targetLevelFrames.toDouble(),50.0)
+        assertEquals(48_000.0,rate.toDouble(),20.0)
+    }
+
+    @Test fun calibrationIncludesAudioThatArrivedDuringABlockingWrite() {
+        val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
+        for(step in 0..40) {
+            val now=1_000_000_000L+step*100_000_000L
+            // 24000 initially drains to 19200; another 4800 arrives uniformly.
+            // Integral of those arrivals is 2400 frames * 100ms.
+            trim.sample(24_000,now,arrivedFrameNs=2400.0*100_000_000L)
+            trim.rateDue(now)
+        }
+        assertTrue(!trim.calibrating)
+        assertEquals(24_000L,trim.targetLevelFrames)
+        trim.measureAgain()
+        assertTrue(trim.calibrating)
+    }
+
+    @Test fun calibrationDoesNotLearnBeforePlaybackMovesOrAccelerateLowPcm() {
+        MediaClockTrim.learnedTrim=.01
+        val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
+        for(step in 0..50) {
+            val now=step*100_000_000L
+            trim.sample(1700,now,compressedFrames=45*1024L,headMoving=false)
+            trim.rateDue(now)
+            assertTrue(trim.rate<=48_000)
+        }
+        assertTrue(trim.calibrating)
+        assertEquals(14_400L,trim.targetLevelFrames)
+        assertEquals(.01,MediaClockTrim.learnedTrim,1e-8)
     }
 
 }

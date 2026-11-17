@@ -480,6 +480,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(intent.action==ReceiverSessionService.ACTION_OPEN) showCarPlay()
     }
     private fun friendlyFailure(message:String):String = when {
+        message.contains("Turn on Bluetooth",true) -> "车机蓝牙未开启或尚未就绪。请在原车设置开启蓝牙，等待就绪后重新连接。"
         message.contains("paired",true) || message.contains("bonded",true) -> "未找到明确的已配对 iPhone，请先完成蓝牙配对；多部手机时展开配置选择一部。"
         message.contains("bluetoothMac",true) -> "本机蓝牙标识无效，无法启动 CarPlay 握手。请查看本地诊断。"
         message.contains("Bluetooth",true) || message.contains("RFCOMM",true) -> "蓝牙握手失败；普通配对并不代表 CarPlay 握手成功。请查看本地诊断中的具体原因。"
