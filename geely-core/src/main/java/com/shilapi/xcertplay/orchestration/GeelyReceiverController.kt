@@ -273,7 +273,7 @@ class CarPlayController(
     private var ch341PermissionCloseable: Closeable? = null
     private var lastCh341Listing: String? = null
     private var lastIphoneListing: String? = null
-    private val teardownComplete = CountDownLatch(1)
+    private val teardownComplete = TeardownCompletion()
 
     private data class SessionCornerMask(val session: AirPlaySession, val png: ByteArray, val width: Int)
     @Volatile private var currentCornerMask: SessionCornerMask? = null
@@ -606,6 +606,8 @@ class CarPlayController(
 
 
     /** Waits for wireless iAP2, authentication and listener teardown; intended for a non-main lifecycle thread. */
+    fun whenClosed(callback:()->Unit) = teardownComplete.onComplete(callback)
+
     fun awaitClosed(timeoutMillis: Long): Boolean {
         require(timeoutMillis >= 0) { "timeoutMillis must not be negative" }
         return try {
@@ -1555,6 +1557,8 @@ class CarPlayController(
             diagnostics?.close()
             wirelessConnectionProof.clear()
             media.setIapTunnelHandler(null)
+            // Close listener/session sockets before potentially slow discovery shutdown.
+            if (service != null && owner != null) closeBestEffort("AirPlay service") { service.detachWireless(owner) }
             val activeTunnel = wirelessTunnelChannel
             wirelessTunnelChannel = null
             if (activeTunnel != null) closeBestEffort("tunneled iAP2 link") { activeTunnel.close() }
@@ -1578,7 +1582,7 @@ class CarPlayController(
             wirelessActiveReported.set(false)
             wirelessHandoffFellBack.set(false)
 
-            if (service != null && owner != null) closeBestEffort("AirPlay service") { service.detachWireless(owner) }
+
         }
 
     private fun isBluetoothDeviceConnected(device: BluetoothDevice): Boolean = try {
@@ -1732,6 +1736,7 @@ class CarPlayController(
     private fun closeBestEffort(name: String, close: () -> Unit) {
         val started = System.nanoTime()
         var completed = false
+        connectionDiagnostic("teardown resource=$name begin")
         try {
             close()
             completed = true

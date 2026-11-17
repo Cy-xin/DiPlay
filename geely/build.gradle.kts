@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 132
-        versionName = "0.9.0-geely-navigation-focus"
+        versionCode = 133
+        versionName = "0.9.1-geely-wheel-smooth"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

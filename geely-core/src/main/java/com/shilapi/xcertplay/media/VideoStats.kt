@@ -8,7 +8,9 @@ internal class VideoStats(
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private var windowStartNs = nanoTime()
-    private var lastArrivalNs = 0L
+    private var lastArrivalNs = -1L
+    private var lastShownNs = -1L
+    private var sourceGapMaxNs = 0L
     private var received = 0
     private var rendered = 0
     private var recoveries = 0
@@ -27,7 +29,8 @@ internal class VideoStats(
     @Synchronized fun onReceived(size: Int) {
         val now = nanoTime()
         val gap = now - lastArrivalNs
-        if (lastArrivalNs != 0L && gap < IDLE_GAP_NS) maxArrivalGapNs = maxOf(maxArrivalGapNs, gap)
+        if (lastArrivalNs >= 0L) sourceGapMaxNs=maxOf(sourceGapMaxNs,gap)
+        if (lastArrivalNs >= 0L && gap < IDLE_GAP_NS) maxArrivalGapNs = maxOf(maxArrivalGapNs, gap)
         lastArrivalNs = now
         // Touches only change the main screen; a second stream must not consume their samples.
         val touchLatency = if (label.isEmpty()) TouchLatencyProbe.onFrame(now) else -1L
@@ -44,7 +47,7 @@ internal class VideoStats(
         queueWaitMaxNs=maxOf(queueWaitMaxNs,waitNs.coerceAtLeast(0))
         queuePeak=maxOf(queuePeak,pendingFrames.coerceAtLeast(0))
     }
-    @Synchronized fun onRendered() { rendered++ }
+    @Synchronized fun onRendered() { rendered++;lastShownNs=nanoTime() }
 
     @Synchronized fun onRecovery() { recoveries++ }
 
@@ -72,20 +75,20 @@ internal class VideoStats(
         val elapsedNs = now - windowStartNs
         if (elapsedNs < WINDOW_NS) return null
         val seconds = elapsedNs / 1e9
-        if (received == 0 && touchSamples == 0) { windowStartNs = now; return null }
+        if (lastArrivalNs < 0L && received == 0 && touchSamples == 0) { windowStartNs = now; return null }
         val touchAvgMs = if (touchSamples == 0) -1 else touchLatencySumNs / touchSamples / 1_000_000
         val line = ("video stats$label rx=%.1ffps shown=%.1ffps maxGap=%dms kbps=%d recoveries=%d " +
             "touch2frame avg=%dms max=%dms n=%d touchSendMax=%dms").format(
             received / seconds, rendered / seconds, maxArrivalGapNs / 1_000_000,
             (bytes * 8 / 1000 / seconds).toLong(), recoveries,
             touchAvgMs, maxTouchLatencyNs / 1_000_000, touchSamples, TouchLatencyProbe.maxSendNs / 1_000_000,
-        ) + decodeSummary()+" queueMax=${queueWaitMaxNs/1_000_000}ms queuePeak=$queuePeak"
+        ) + decodeSummary()+" sourceGapMax=${sourceGapMaxNs/1_000_000}ms sinceRx=${if(lastArrivalNs>=0) (now-lastArrivalNs)/1_000_000 else -1}ms sinceShown=${if(lastShownNs>=0) (now-lastShownNs)/1_000_000 else -1}ms queueMax=${queueWaitMaxNs/1_000_000}ms queuePeak=$queuePeak"
         TouchLatencyProbe.maxSendNs = 0
         Log.i(TAG, line)
         windowStartNs = now
         received = 0; rendered = 0; recoveries = 0; bytes = 0; maxArrivalGapNs = 0
         touchSamples = 0; touchLatencySumNs = 0; maxTouchLatencyNs = 0
-        decodeSamples = 0; late = 0;queueWaitMaxNs=0;queuePeak=0
+        decodeSamples = 0; late = 0;sourceGapMaxNs=0;queueWaitMaxNs=0;queuePeak=0
         return line
     }
 

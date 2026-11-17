@@ -24,6 +24,7 @@ internal class MediaClockTrim(
     private var targetFrames: Long,
     private var integral: Double = learnedTrim,
     private val measuresTarget: Boolean = false,
+    private val maxMeasuredTargetFrames:Long = Long.MAX_VALUE,
 ) {
     // Keep the proven starvation floor tied to the user's start buffer, not the
     // target later measured from burst delivery.
@@ -103,7 +104,7 @@ internal class MediaClockTrim(
             measuring = Measuring(nowNs, halfMean)
             return
         }
-        targetFrames = earlierHalfMean.roundToLong().coerceAtLeast(1L)
+        targetFrames = earlierHalfMean.roundToLong().coerceIn(1L,maxMeasuredTargetFrames.coerceAtLeast(1L))
         level = 0.0
         measuring = null
     }

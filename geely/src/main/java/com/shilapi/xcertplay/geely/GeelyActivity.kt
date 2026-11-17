@@ -44,6 +44,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var phoneName = "自动选择已配对的 iPhone"
     private var controller: CarPlayController? = null
     private var sink: AndroidMediaSink? = null
+    private var wheelKeys:ReceiverWheelKeys?=null
     private var currentSurface: Surface? = null
     private var configuredWidth = 0
     private var configuredHeight = 0
@@ -380,7 +381,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                             val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
                             journal.event("audio","output_mapping_plan","role=${role.name} choice=$choice bus=${bus ?: "system"} detected=${bus!=null && audioOutputs.any {it.address==bus}}")
                         }
-                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,navigationFocusEnabled=ReceiverAudioRouting.isGeely(Build.MODEL),navigationDuckVolume=0.5f,audioOutputRoutes=audioRoutes,audioUsageOverrides=ReceiverAudioRouting.usages(audioMappings),wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,vendorLowLatencyDecoder=lowLatencyVideo,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
+                        val renderer=AndroidMediaSink(videoWidth=air.main.widthPixels,videoHeight=air.main.heightPixels,context=applicationContext,audioFocusEnabled=true,navigationMixEnabled=true,navigationFocusEnabled=ReceiverAudioRouting.isGeely(Build.MODEL),navigationDuckVolume=0.5f,navigationFadeMillis=250L,audioOutputRoutes=audioRoutes,audioUsageOverrides=ReceiverAudioRouting.usages(audioMappings),wirelessAudio=true,mediaBufferMillis=mediaBuffer,videoFps=videoFps,mainVideoFrameRate=videoFps,vendorLowLatencyDecoder=lowLatencyVideo,onAudioDiagnostic={ log(it);android.util.Log.i("DiPlay-Audio",it) })
                         sink=renderer;currentSurface?.let { renderer.setSurface(110,it) }
                         val next=CarPlayController(this,runtime,air,identity,pairs,listener(token),CarPlayMediaEngine(renderer,microphoneEnabled=air.microphone),{state -> main.post {onStatus(token,state)} })
                         log("Audio: capability output=${!air.disableAudioOutput} microphone=${air.microphone} mainBuffered=${air.mainBufferedAudio} bufferMs=$mediaBuffer requestedFps=$videoFps")
@@ -400,7 +401,17 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         override fun onTcpAccepted(event:AirPlayTcpAccepted) {main.post {if(token==generation && !destroyed) timingStage(ReceiverConnectionTiming.Stage.HANDSHAKE)}}
         override fun onSessionActive(session:AirPlaySession) { main.post { if(token==generation) { currentAirPlaySession=session;root.post {fitSessionSurface()};timingStage(ReceiverConnectionTiming.Stage.VIDEO); update("CarPlay 会话已建立，正在等待画面…") } } }
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
-            connected=true;ui.showCarPlay=true;timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
+            connected=true;ui.showCarPlay=true;
+            if(ReceiverAudioRouting.isGeely(Build.MODEL)) {
+                wheelKeys?.close()
+                wheelKeys=ReceiverWheelKeys(applicationContext,{action,long ->
+                    if(token==generation && connected && !stopping && !destroyed) {
+                        val sent=if(long) controller?.requestSiri() else controller?.sendMediaButton(action)
+                        journal.event("operation","wheel_action","action=$action long=$long queued=$sent")
+                    }
+                },{journal.event("operation","wheel_listener",it)}).also {it.start()}
+            }
+            timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
         override fun onSessionEnded(session:AirPlaySession) { main.post { if(token==generation && currentAirPlaySession===session) recoverOrEnd("iPhone 已断开，可重新连接。",controlFailure?.let(ReceiverRecovery::transient)==true) } }
         override fun onTransportError(message:String) { log("传输失败: $message");main.post { if(token==generation) recoverOrEnd("CarPlay 传输中断。请检查网络和手机上的 CarPlay 授权后重试。",ReceiverRecovery.transient(message)) } }
@@ -415,7 +426,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
         override fun onDebugLog(message:String) {
             if(message.startsWith("airplay control closing reason=control I/O failed:")) controlFailure=message
-            if(token==generation) log(message)
+            if(token==generation || message.contains("teardown")) log(message)
         }
     }
     private fun onStatus(token:Int,state:CarPlayStatus) {
@@ -500,13 +511,14 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         pictureRecovery.stop()
         ui.showCarPlay=false;sessionRotation=null
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
+        wheelKeys?.close();wheelKeys=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
-        // close() cancels the blocking Bluetooth/network operations before queued preparation finishes.
-        old?.close()
-        worker.execute {
-            val transportReleased=old?.awaitClosed(8_000) ?: true
+        // Cancellation must not wait behind the preparation worker or block the UI thread.
+        Thread({
+            old?.close()
             val mediaReleased=runCatching { renderer?.close() }.isSuccess
+            fun completeRelease(transportReleased:Boolean) {
             val released=transportReleased && mediaReleased
             journal.event("connection","resources_released","transport=$transportReleased media=$mediaReleased",if(released) "INFO" else "ERROR")
             if (released) ReceiverSessionGate.release(lease)
@@ -524,8 +536,16 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     }.also {main.postDelayed(it,retryDelay)}
                 }
             } }
-        }
+            }
+            if(old==null || old.awaitClosed(8_000)) completeRelease(true)
+            else {
+                journal.event("connection","teardown_waiting","Transport is still closing; completion callback retained","WARN")
+                main.post {if(!destroyed) {update("正在释放连接，请稍候。完成后即可重新连接。");applyState()}}
+                old.whenClosed {completeRelease(true)}
+            }
+        },"geely-session-release").apply {isDaemon=true;start()}
     }
+
     private fun fitSessionSurface() {
         if(root.width<=0 || root.height<=0) return
         if((busy || connected) && configuredWidth>0 && configuredHeight>0) {

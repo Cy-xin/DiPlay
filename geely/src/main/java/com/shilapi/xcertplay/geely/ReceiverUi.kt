@@ -219,14 +219,14 @@ internal class ReceiverUiState {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide=ReceiverLayoutPolicy.twoColumns(maxWidth.value,LocalDensity.current.fontScale)
         val short=maxHeight/LocalDensity.current.fontScale<420.dp
-        val horizontalModes=wide || maxWidth>=360.dp
+        val horizontalModes=wide || maxWidth/LocalDensity.current.fontScale>=360.dp
         val horizontalFooter=wide || maxWidth>=600.dp
         Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                Text("DiPlay Geely",Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
                 TextButton({ui.openVehicleHome()},Modifier.heightIn(min=48.dp)) {
                     Text(tr("车机主页","Vehicle home"),fontSize=14.sp)
                 }
+                Text("DiPlay Geely",Modifier.weight(1f).padding(start=12.dp),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
                 GlassSurface {Text(if(ui.connected) tr("已连接","Connected") else if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 16.dp)) {
@@ -324,9 +324,9 @@ internal class ReceiverUiState {
     }
     Box(Modifier.fillMaxWidth()) {
         if(wide) Row(Modifier.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(24.dp)) {
+            action(Modifier.width(300.dp))
             status(Modifier.weight(1f))
             if(!ui.busy && ui.message!="未连接。请先连接网络并配对蓝牙。") TextButton(onLogs,Modifier.heightIn(min=48.dp)) {Text(tr("详情","Details"))}
-            action(Modifier.width(300.dp))
         } else Column(Modifier.padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())}
     }
 }

@@ -23,6 +23,7 @@ internal class AudioFocusCoordinator(
     private val navigationMixEnabled: Boolean = false,
     private val navigationFocusEnabled: Boolean = false,
     private val navigationDuckVolume: Float = DUCKED_VOLUME,
+    private val navigationFadeMillis:Long = 0L,
 ) : Closeable {
     private data class Entry(val channel: AudioChannel, val attributes: AudioAttributes, var appliedVolume: Float = 1f) {
         val music = channel == AudioChannel.MEDIA && attributes.contentType != AudioAttributes.CONTENT_TYPE_SPEECH
@@ -49,6 +50,29 @@ internal class AudioFocusCoordinator(
     private var speechPlaying = false
     private val navigationDeadlines=LinkedHashMap<AudioTrack,Long>()
     private var navigationPlaying=false
+    private var navigationGain=1f
+    private val fadeHandler=Handler(Looper.getMainLooper())
+    private var fadeTask:Runnable?=null
+    private fun changeNavigationGain() {
+        fadeTask?.let(fadeHandler::removeCallbacks)
+        fadeTask=null
+        val target=if(navigationPlaying) navigationDuckVolume else 1f
+        if(navigationFadeMillis<=0) {navigationGain=target;return}
+        val start=navigationGain
+        val started=SystemClock.elapsedRealtime()
+        val duration=if(navigationPlaying) navigationFadeMillis else navigationFadeMillis*2
+        val task=object:Runnable {
+            override fun run() {synchronized(this@AudioFocusCoordinator) {
+                if(closed || fadeTask!==this) return
+                val fraction=((SystemClock.elapsedRealtime()-started).toFloat()/duration).coerceIn(0f,1f)
+                val smooth=fraction*fraction*(3f-2f*fraction)
+                navigationGain=start+(target-start)*smooth
+                applyVolumes()
+                if(fraction<1f) fadeHandler.postDelayed(this,16) else fadeTask=null
+            }}
+        }
+        fadeTask=task;fadeHandler.post(task)
+    }
     private var navigationRequest: AudioFocusRequestCompat? = null
     private var navigationGeneration=0
     private var navigationFocusBlocked=false
@@ -135,6 +159,7 @@ internal class AudioFocusCoordinator(
         val guidance=navigationDeadlines.isNotEmpty()
         if(guidance!=navigationPlaying) {
             navigationPlaying=guidance
+            changeNavigationGain()
             if(!guidance) navigationFocusBlocked=false
             applyVolumes()
             runCatching {report("Audio: navigation overlay playing=$guidance mediaDuck=$navigationDuckVolume")}
@@ -207,6 +232,7 @@ internal class AudioFocusCoordinator(
     @Synchronized override fun close() {
         if (closed) return
         closed = true
+        fadeTask?.let(fadeHandler::removeCallbacks);fadeTask=null
         abandonNavigationFocus()
         abandonRequest()
         active.clear(); captures.clear(); mediaAttributes = null
@@ -306,7 +332,7 @@ internal class AudioFocusCoordinator(
                 val volume = when {
                     entry.music && speechPlaying -> 0f
                     entry.music -> (if(enabled && manager!=null) focusVolume else 1f).let {
-                        if(navigationPlaying) minOf(it,navigationDuckVolume) else it
+                        minOf(it,navigationGain)
                     }
                     else -> 1f
                 }
@@ -314,7 +340,7 @@ internal class AudioFocusCoordinator(
                     val applied = runCatching { track.setStereoVolume(volume, volume) == AudioTrack.SUCCESS }.getOrDefault(false)
                     if (applied) {
                         entry.appliedVolume = volume
-                        if(entry.music && navigationMixEnabled) runCatching {
+                        if(entry.music && navigationMixEnabled && fadeTask==null) runCatching {
                             report("Audio: media mix gain=$volume guidance=$navigationPlaying speech=$speechPlaying focus=$focusVolume")
                         }
                     }

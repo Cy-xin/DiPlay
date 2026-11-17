@@ -61,6 +61,7 @@ class AndroidMediaSink(
     private val audioFocusAutoYield: Boolean = true,
     private val navigationMixEnabled: Boolean = false,
     private val navigationFocusEnabled: Boolean = false,
+    private val navigationFadeMillis:Long = 0L,
     private val navigationDuckVolume: Float = 0.2f,
     private val mediaChannel: Int = 0,
     private val navigationChannel: Int = 0,
@@ -129,6 +130,7 @@ class AndroidMediaSink(
         unifiedMediaOutput = unifiedMediaOutput,
         navigationMixEnabled = navigationMixEnabled,
         navigationFocusEnabled = navigationFocusEnabled,
+        navigationFadeMillis = navigationFadeMillis,
         navigationDuckVolume = navigationDuckVolume.coerceIn(0.1f,1f),
         onOwnershipChanged = { owned -> ownsAudio = owned; audioOwnershipListener?.invoke(owned) },
     )
@@ -763,7 +765,7 @@ class AndroidMediaSink(
         pacingDelayNanos = if (type == MAIN_SCREEN_TYPE && statsLabel == null) videoPacingDelayMillis * 1_000_000L else 0L,
         operatingRate = videoOperatingRate(type, statsLabel, mainVideoFrameRate),
         vendorLowLatency = vendorLowLatencyDecoder,
-        dedicatedOutputThread = vendorLowLatencyDecoder,
+        dedicatedOutputThread = true,
         framesAtOnce = type == MAIN_SCREEN_TYPE && statsLabel == null && videoPacingDelayMillis > 0,
         // Keep the experimental MTK mode on the main CarPlay picture only. Mirrors and the
         // cluster have separate timing and must retain their established decoder configuration.
@@ -2164,7 +2166,7 @@ private class AudioRenderer(
         val capacityBytes = built.bufferSizeInFrames * frameBytes
         startThresholdBytes = MediaAudioBuffer.startBytesFor(plan.startBytes, capacityBytes, PREBUFFER_WRITE_CHUNK_BYTES)
         // Only music plays long enough for the clocks to drift apart; calls keep their echo reference exact.
-        clockTrim = if (mappedChannel == AudioChannel.MEDIA) MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong(), measuresTarget = true) else null
+        clockTrim = if (mappedChannel == AudioChannel.MEDIA) MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong(), measuresTarget = true, maxMeasuredTargetFrames = (startThresholdBytes / frameBytes).toLong() + format.sampleRate * 400L / 1000) else null
         val trackMetadata = runCatching {
             "api=${Build.VERSION.SDK_INT} trackState=${built.state} trackRate=${built.sampleRate} " +
                 "usage=${trackAttributes?.usage} contentType=${trackAttributes?.contentType} " +
