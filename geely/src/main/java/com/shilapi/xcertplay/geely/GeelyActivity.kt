@@ -45,6 +45,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var controller: CarPlayController? = null
     private var sink: AndroidMediaSink? = null
     private var wheelKeys:ReceiverWheelKeys?=null
+    private var wheelProbe:ReceiverWheelKeys?=null
+    private var wheelDetectionTimeout:Runnable?=null
     private var currentSurface: Surface? = null
     private var configuredWidth = 0
     private var configuredHeight = 0
@@ -114,6 +116,11 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.audit={event,detail -> journal.event("operation",event,detail)}
         ui.exportLocalLog={exportLocalDiagnostics()}
         ui.openVehicleHome={openVehicleHome()}
+        ui.saveWheelMapping={key,action -> saveWheelMapping(key,action)}
+        ui.resetWheelMappings={resetWheelMappings()}
+        ui.startWheelDetection={startWheelDetection()}
+        ui.stopWheelDetection={stopWheelDetection()}
+        ui.testWheelAction={testWheelAction(it)}
         ui.saveAudioMapping={role,value -> saveAudioMapping(role,value)}
         ui.resetAudioMappings={resetAudioMappings()}
         ui.refreshAudioOutputs={refreshAudioOutputs()}
@@ -242,6 +249,69 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.audioOutputBuses=com.shilapi.xcertplay.media.AudioOutputDevice.outputs(getSystemService(android.media.AudioManager::class.java))
             .filter {it.type==android.media.AudioDeviceInfo.TYPE_BUS}.map {it.address}.toSet()
     }
+    internal fun saveWheelMapping(key:Int,action:Int) {
+        if(!ui.displayEditable || ui.wheelDetecting) return
+        val button=ReceiverWheelButton.entries.firstOrNull {it.key==key} ?: return
+        val safe=ReceiverWheelMapping.action(key,action)
+        store.prefs.edit().putInt(button.preference,safe).apply()
+        ui.wheelMappings=ui.wheelMappings+(key to safe)
+        ui.wheelMessage="已保存，立即生效。可测试控制，再检测实体按键。"
+        journal.event("operation","wheel_mapping_saved","key=$key action=$safe")
+    }
+    internal fun resetWheelMappings() {
+        if(!ui.displayEditable || ui.wheelDetecting) return
+        store.prefs.edit().apply {ReceiverWheelButton.entries.forEach {remove(it.preference)}}.apply()
+        ui.wheelMappings=ReceiverWheelMapping.defaults
+        ui.wheelMessage="已恢复吉利默认映射，立即生效。"
+        journal.event("operation","wheel_mapping_reset")
+    }
+    internal fun testWheelAction(action:Int) {
+        if(!connected || stopping || ui.wheelDetecting || action !in ReceiverWheelMapping.choices || action==0) return
+        val sent=controller?.sendMediaButton(action)==true
+        ui.wheelMessage=if(sent) "已发送${ReceiverWheelMapping.title(action)}测试，请确认 CarPlay 是否响应。" else "测试未发送：CarPlay 控制通道不可用，请检查连接。"
+        journal.event("operation","wheel_control_test","action=$action queued=$sent")
+    }
+    private fun createWheelListener(token:Int)=ReceiverWheelKeys(applicationContext,{action,long ->
+        if(token==generation && connected && !stopping && !destroyed && !ui.wheelDetecting) {
+            val sent=if(long) controller?.requestSiri() else controller?.sendMediaButton(action)
+            journal.event("operation","wheel_action","action=$action long=$long queued=$sent")
+        }
+    },{detail ->
+        journal.event("operation","wheel_listener",detail)
+        if(ui.wheelDetecting && token==generation) {
+            if(detail=="registered=true") ui.wheelMessage="监听已就绪，请按方向盘按键。检测期间不执行 CarPlay 操作。"
+            else if(detail=="bind=false" || detail.startsWith("register_failed=") || detail=="service_disconnected") {
+                stopWheelDetection();ui.wheelMessage="无法读取原车按键服务，请确认当前是吉利车机并查看诊断日志。"
+            }
+        }
+    },mappings={ui.wheelMappings},observed={key,long ->
+        if(token==generation && ui.wheelDetecting && !destroyed) {
+            val source=ReceiverWheelButton.entries.firstOrNull {it.key==key}?.title ?: if(key==200400) "MODE 键" else "按键"
+            val action=ReceiverWheelKeys.action(key,long,ui.wheelMappings)
+            val target=if(action==-1) "Siri" else if(action==null) "不执行 CarPlay 操作" else ReceiverWheelMapping.title(action)
+            ui.wheelLastEvent="收到：$source · ${if(long) "长按" else "短按"} · $key → $target（检测中未执行）"
+            journal.event("operation","wheel_input_test","key=$key long=$long mapped=$action forwarded=false")
+        }
+    })
+    internal fun startWheelDetection() {
+        if(stopping || (busy && !connected) || destroyed || ui.wheelDetecting) return
+        if(!ReceiverAudioRouting.isGeely(Build.MODEL)) {
+            ui.wheelMessage="实体按键检测需要吉利车机。手机上可修改映射，连接 CarPlay 后可测试控制。";return
+        }
+        ui.wheelDetecting=true;ui.wheelLastEvent="";ui.wheelMessage="正在启动 20 秒按键检测…"
+        journal.event("operation","wheel_detection_started","connected=$connected durationMs=20000")
+        if(!connected) {wheelProbe=createWheelListener(generation);wheelProbe?.start()}
+        else ui.wheelMessage="请在 20 秒内按方向盘按键。检测期间不执行 CarPlay 操作。"
+        if(ui.wheelDetecting) wheelDetectionTimeout=Runnable {stopWheelDetection()}.also {main.postDelayed(it,20_000)}
+    }
+    internal fun stopWheelDetection() {
+        wheelDetectionTimeout?.let(main::removeCallbacks);wheelDetectionTimeout=null
+        wheelProbe?.close();wheelProbe=null
+        if(ui.wheelDetecting) {
+            ui.wheelDetecting=false;ui.wheelMessage="按键检测已结束；正常映射已恢复。"
+            journal.event("operation","wheel_detection_stopped")
+        }
+    }
     internal fun saveAudioMapping(role:ReceiverAudioRole,value:String) {
         if(!ui.displayEditable) return
         stopAudioTest()
@@ -260,6 +330,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("audio","output_mapping_reset","next_connection=true")
     }
     private fun refreshPlaybackLabels() {
+        ui.wheelMappings=ReceiverWheelMapping.load(store.prefs)
         ui.lowLatencyVideo=store.prefs.getBoolean("low_latency_video",false)
         ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.sanitize(store.prefs.getString(it.preference,null))}
         refreshAudioOutputs()
@@ -403,13 +474,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         override fun onVideoFrameRendered(session:AirPlaySession) { main.post { if(token==generation && !destroyed && !connected && currentAirPlaySession===session) {
             connected=true;ui.showCarPlay=true;
             if(ReceiverAudioRouting.isGeely(Build.MODEL)) {
-                wheelKeys?.close()
-                wheelKeys=ReceiverWheelKeys(applicationContext,{action,long ->
-                    if(token==generation && connected && !stopping && !destroyed) {
-                        val sent=if(long) controller?.requestSiri() else controller?.sendMediaButton(action)
-                        journal.event("operation","wheel_action","action=$action long=$long queued=$sent")
-                    }
-                },{journal.event("operation","wheel_listener",it)}).also {it.start()}
+                wheelKeys?.close();wheelKeys=createWheelListener(token).also {it.start()}
             }
             timeout?.let(main::removeCallbacks);finishTiming("success");update("CarPlay 已连接，画面已解码显示");applyState()
         } } }
@@ -511,7 +576,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         pictureRecovery.stop()
         ui.showCarPlay=false;sessionRotation=null
         ++generation;timeout?.let(main::removeCallbacks);timeout=null
-        wheelKeys?.close();wheelKeys=null
+        stopWheelDetection();wheelKeys?.close();wheelKeys=null
         currentAirPlaySession=null;connected=false;busy=false;stopping=true;update(reason+"\n正在释放连接…");applyState()
         val old=controller;val renderer=sink;val lease=leaseToken;leaseToken=null;controller=null;sink=null
         // Cancellation must not wait behind the preparation worker or block the UI thread.
@@ -677,7 +742,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
         pictureRecovery.stop()
         ++audioTestGeneration;stopAudioTest()

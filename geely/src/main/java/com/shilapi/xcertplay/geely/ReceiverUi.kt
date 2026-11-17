@@ -44,7 +44,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import kotlinx.coroutines.launch
 
-internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD, AUDIO_ROUTE }
+internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD, AUDIO_ROUTE, WHEEL_MAPPING }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
     var audit:(String,String)->Unit={_,_->}
@@ -91,6 +91,16 @@ internal class ReceiverUiState {
     var connected by mutableStateOf(false)
     var showCarPlay by mutableStateOf(false)
     var message by mutableStateOf("未连接。请先连接网络并配对蓝牙。")
+    var wheelMappings by mutableStateOf(ReceiverWheelMapping.defaults)
+    var wheelMappingKey by mutableIntStateOf(200087)
+    var wheelDetecting by mutableStateOf(false)
+    var wheelMessage by mutableStateOf("")
+    var wheelLastEvent by mutableStateOf("")
+    var saveWheelMapping:(Int,Int)->Unit={_,_->}
+    var resetWheelMappings:()->Unit={}
+    var startWheelDetection:()->Unit={}
+    var stopWheelDetection:()->Unit={}
+    var testWheelAction:(Int)->Unit={}
     var openVehicleHome:()->Unit={}
     var settingsOpen by mutableStateOf(false)
     var dialog by mutableStateOf<ReceiverDialog?>(null)
@@ -351,7 +361,7 @@ internal class ReceiverUiState {
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
                     Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
                 Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
-                    val groups=listOf(tr("连接","Connection"),tr("音频与画面","Audio & display"),tr("外观","Appearance"))
+                    val groups=listOf(tr("连接","Connection"),tr("音频与画面","Audio & display"),tr("外观","Appearance"),tr("方向盘","Steering wheel"))
                     if(wide && query.isBlank()) Column(Modifier.width(180.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         groups.forEachIndexed {index,label ->
                             Surface(onClick={settingsGroup=index;ui.audit("settings_group","index=$index")},shape=ReceiverTokens.control,
@@ -364,6 +374,7 @@ internal class ReceiverUiState {
                     fun matches(vararg words:String)=if(query.isNotBlank()) words.any {it.contains(query,true)} else !wide || words.firstOrNull()==groups[settingsGroup]
                     @Composable fun section(title:String) { Text(title,Modifier.padding(top=16.dp,bottom=4.dp),fontSize=14.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary) }
                     val connection=tr("连接","Connection");val playback=tr("音频与画面","Audio & display");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
+                    val wheel=tr("方向盘","Steering wheel")
                     var found=false
                     if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
                     if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
@@ -405,6 +416,10 @@ internal class ReceiverUiState {
                             Switch(ui.lowLatencyVideo,{ui.saveLowLatencyVideo(it)},enabled=ui.displayEditable)
                         }
                     }
+                    if(matches(wheel,"按键","映射","下一首","上一首","播放","暂停","wheel","key","MODE","Siri")) {
+                        found=true;section(tr("方向盘按键","Steering-wheel keys"))
+                        ReceiverWheelSettings(ui)
+                    }
                     if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
                     if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
                     if(matches(playback,"界面大小","图标","缩放","size","scale")) {found=true;SettingsRow(tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"),"${ui.carPlaySize}% · "+tr("下次连接生效","Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.SIZE}}
@@ -441,6 +456,29 @@ internal class ReceiverUiState {
         }
     }
 }
+@Composable internal fun ReceiverWheelSettings(ui:ReceiverUiState) {
+    DisposableEffect(Unit) {onDispose {ui.stopWheelDetection()}}
+    Text(tr("默认使用已实车确认的吉利按键。点击一项更改短按操作，保存后立即生效。","Defaults use verified Geely keys. Select a row to change its short-press action; changes apply immediately."),fontSize=13.sp)
+    ReceiverWheelButton.entries.forEach {button ->
+        val action=ui.wheelMappings[button.key] ?: button.defaultAction
+        SettingsRow(tr(button.title,button.english),tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action))+" · ${button.key}",ui.displayEditable && !ui.wheelDetecting) {
+            ui.wheelMappingKey=button.key;ui.dialog=ReceiverDialog.WHEEL_MAPPING
+        }
+        OutlinedButton({ui.testWheelAction(action)},enabled=ui.connected && !ui.stopping && !ui.wheelDetecting && action!=0,modifier=Modifier.heightIn(min=48.dp)) {
+            Text(tr("测试控制：","Test control: ")+tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action)))
+        }
+    }
+    Text(tr("测试控制会向当前 CarPlay 发送一次操作，请核对手机或 CarPlay 是否响应；它不代表实体按键已识别。","Control tests send one action to connected CarPlay. Verify its response; this does not test physical key reception."),fontSize=13.sp)
+    Text(tr("实体按键检测持续 20 秒，只显示收到的按键，不执行 CarPlay 操作。原车自身操作仍可能触发。","Physical-key detection lasts 20 seconds and reports input without forwarding it to CarPlay. Factory actions may still occur."),fontSize=13.sp)
+    OutlinedButton({if(ui.wheelDetecting) ui.stopWheelDetection() else ui.startWheelDetection()},enabled=!ui.stopping && (!ui.busy || ui.connected),modifier=Modifier.heightIn(min=48.dp)) {
+        Text(if(ui.wheelDetecting) tr("停止按键检测","Stop key detection") else tr("检测实体按键","Detect physical keys"))
+    }
+    if(ui.wheelMessage.isNotEmpty()) Text(ui.wheelMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+    if(ui.wheelLastEvent.isNotEmpty()) Text(ui.wheelLastEvent,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+    Text(tr("MODE 长按 → Siri：仅连接成功后启用；短按切换原车音源。","MODE long press → Siri: available only after connection. Short press keeps the factory source switch."),fontSize=13.sp)
+    TextButton({ui.resetWheelMappings()},enabled=ui.displayEditable && !ui.wheelDetecting,modifier=Modifier.heightIn(min=48.dp)) {Text(tr("恢复吉利默认映射","Restore Geely defaults"))}
+}
+
 @Composable private fun SettingsRow(title:String,subtitle:String,enabled:Boolean,onClick:()->Unit) {
     Surface(onClick,enabled=enabled,shape=ReceiverTokens.control,color=MaterialTheme.colorScheme.surface.copy(alpha=.7f),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
@@ -499,6 +537,24 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
             text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
+        return
+    }
+    if(dialog==ReceiverDialog.WHEEL_MAPPING) {
+        val button=ReceiverWheelButton.entries.first {it.key==ui.wheelMappingKey}
+        ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr(button.title,button.english))},text={
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(tr("保存后立即生效，不会断开 CarPlay。只调整短按操作；MODE 长按仍用于 Siri。","Changes apply immediately without disconnecting. MODE long press remains Siri."),fontSize=14.sp)
+                ReceiverWheelMapping.choices.forEach {action ->
+                    val selected=ui.wheelMappings[button.key]==action
+                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {
+                        ui.saveWheelMapping(button.key,action);ui.dialog=null
+                    }.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected,null,enabled=ui.displayEditable)
+                        Text(tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action)),fontSize=16.sp)
+                    }
+                }
+            }
+        },confirmButton={TextButton({ui.dialog=null}) {Text(tr("取消","Cancel"))}})
         return
     }
     if(dialog==ReceiverDialog.AUDIO_ROUTE) {

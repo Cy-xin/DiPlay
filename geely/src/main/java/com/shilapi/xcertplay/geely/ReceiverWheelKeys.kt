@@ -11,6 +11,8 @@ internal class ReceiverWheelKeys(
     private val context:Context,
     private val dispatch:(Int,Boolean)->Unit,
     private val report:(String)->Unit,
+    private val mappings:()->Map<Int,Int> = {ReceiverWheelMapping.defaults},
+    private val observed:(Int,Boolean)->Unit={_,_->},
 ):Closeable {
     private val main=Handler(Looper.getMainLooper())
     private var bound=false
@@ -25,8 +27,12 @@ internal class ReceiverWheelKeys(
         override fun onLongPressTriggered(key:Int,function:Int) = offer(key,true)
     }
     private fun offer(key:Int,long:Boolean) {
-        val action=action(key,long) ?: return
-        main.post {if(!closed) {report("key=$key long=$long action=$action");dispatch(action,long)}}
+        main.post {if(!closed) {
+            observed(key,long)
+            val action=action(key,long,mappings())
+            report("key=$key long=$long action=${action ?: "none"}")
+            if(action!=null) dispatch(action,long)
+        }}
     }
     private val connection=object:ServiceConnection {
         override fun onServiceConnected(name:ComponentName,binder:IBinder) {
@@ -53,12 +59,10 @@ internal class ReceiverWheelKeys(
     companion object {
         private val KEYS=intArrayOf(200085,200087,200088,200400)
         // CarPlay media HID usages; MODE is recognized only via its long callback.
-        fun action(key:Int,long:Boolean):Int? = when {
+        fun action(key:Int,long:Boolean,mappings:Map<Int,Int> = ReceiverWheelMapping.defaults):Int? = when {
             long && key==200400 -> -1
             long -> null
-            key==200085 -> com.shilapi.xcertplay.airplay.CarPlayMediaButton.PLAY_PAUSE
-            key==200087 -> com.shilapi.xcertplay.airplay.CarPlayMediaButton.NEXT
-            key==200088 -> com.shilapi.xcertplay.airplay.CarPlayMediaButton.PREVIOUS
+            key in ReceiverWheelMapping.defaults -> mappings[key]?.takeIf {it in ReceiverWheelMapping.choices && it!=0}
             else -> null
         }
     }

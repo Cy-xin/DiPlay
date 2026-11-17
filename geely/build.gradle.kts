@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 133
-        versionName = "0.9.1-geely-wheel-smooth"
+        versionCode = 134
+        versionName = "0.9.2-geely-wheel-settings"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

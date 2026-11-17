@@ -1,5 +1,11 @@
 package com.shilapi.xcertplay.geely
 
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.*
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -21,7 +27,8 @@ import java.util.Locale
 class ReceiverConnectionScreenshotsTest {
     @Test fun connectionAtLargeFontsCompactWideAndRtl() {
         for((name,width,height,language) in listOf(
-            Case("compact-large",420,900,"zh-CN"),Case("wide-large",1280,720,"zh-CN"),Case("wide-rtl-large",1280,720,"ar-SA")
+            Case("compact-large",420,900,"zh-CN"),Case("wide-large",1280,720,"zh-CN"),Case("wide-rtl-large",1280,720,"ar-SA"),
+            Case("wheel-compact-large",420,900,"zh-CN"),Case("wheel-wide-large",1280,720,"zh-CN"),Case("wheel-rtl-large",1280,720,"ar-SA")
         )) {
             RuntimeEnvironment.setQualifiers("w${width}dp-h${height}dp-mdpi")
             val app=RuntimeEnvironment.getApplication()
@@ -29,6 +36,15 @@ class ReceiverConnectionScreenshotsTest {
             @Suppress("DEPRECATION") app.resources.updateConfiguration(config,app.resources.displayMetrics)
             val controller=Robolectric.buildActivity(GeelyActivity::class.java).setup().visible()
             try {
+                if(name.startsWith("wheel-")) controller.get().setContent {
+                    ReceiverTheme(ReceiverThemeMode.SYSTEM) {
+                        ReceiverScene(Modifier.fillMaxSize()) {GlassSurface(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Text("方向盘按键");ReceiverWheelSettings(controller.get().ui)
+                            }
+                        }}
+                    }
+                }
                 val decor=controller.get().window.decorView
                 decor.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY))
                 decor.layout(0,0,width,height)
