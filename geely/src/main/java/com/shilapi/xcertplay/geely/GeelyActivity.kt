@@ -60,11 +60,20 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var destroyed = false
     private var pictureRecovery = ReceiverPictureRecovery(main,
         eligible = { connected && foreground && !stopping && !destroyed && ui.showCarPlay && currentSurface?.isValid == true },
-        rendered = { sink?.liveVideoCounters()?.rendered ?: -1L },
+        rendered = { currentSurface?.let {sink?.pictureFrameSequence(it)} ?: -1L },
         refresh = { sink?.refreshPicture(110) },
-        report = {event,detail -> journal.event("video",event,detail)},
+        report = {event,detail -> journal.event("video",event,"$detail sessionGeneration=$generation")},
+        observe = {surface,after,notify -> (surface as? Surface)?.let {sink?.observePictureFrame(it,after,notify)}},
+        onFailed = {ui.pictureRestoreFailed=true},
+        onCleared = {ui.pictureRestoreFailed=false},
     )
     private fun restorePicture(reason:String) {pictureRecovery.start(currentSurface,reason)}
+    internal fun retryPicture() {
+        if(connected && foreground && !stopping && !destroyed && ui.showCarPlay && currentSurface?.isValid==true) {
+            journal.event("video","picture_restore_manual_retry")
+            pictureRecovery.retry(currentSurface,"manual_retry")
+        }
+    }
     private var pendingPermissions = false
     private var timeout: Runnable? = null
     private var secret = ""
@@ -116,6 +125,8 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.audit={event,detail -> journal.event("operation",event,detail)}
         ui.exportLocalLog={exportLocalDiagnostics()}
         ui.openVehicleHome={openVehicleHome()}
+        ui.retryPicture={retryPicture()}
+        ui.dismissPictureHint={pictureRecovery.stop();journal.event("video","picture_restore_dismissed")}
         ui.saveWheelMapping={key,action -> saveWheelMapping(key,action)}
         ui.resetWheelMappings={resetWheelMappings()}
         ui.startWheelDetection={startWheelDetection()}

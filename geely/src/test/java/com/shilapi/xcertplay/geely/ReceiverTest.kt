@@ -90,6 +90,32 @@ class ReceiverTest {
         lifecycle.pause().stop().destroy();surface.release();texture.release()
     }
 
+    @Test fun pictureHintRetryAndDismissRetainConnectionAndBackgroundClearsFeedback() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
+        fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}
+        set("connected",true);set("busy",true);invoke(activity,"applyState")
+        val texture=android.graphics.SurfaceTexture(0);val surface=android.view.Surface(texture)
+        set("currentSurface",surface)
+        var requests=0
+        val recovery=ReceiverPictureRecovery(android.os.Handler(Looper.getMainLooper()),
+            {activity.ui.showCarPlay},{0},{requests++},{_,_->},
+            onFailed={activity.ui.pictureRestoreFailed=true},onCleared={activity.ui.pictureRestoreFailed=false})
+        set("pictureRecovery",recovery)
+        try {
+            invoke(activity,"showCarPlay");shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3))
+            assertTrue(activity.ui.pictureRestoreFailed);assertEquals(3,requests)
+            val generation=field(activity,"generation")
+            activity.ui.retryPicture();assertFalse(activity.ui.pictureRestoreFailed);assertEquals(4,requests)
+            assertTrue(activity.ui.connected);assertEquals(generation,field(activity,"generation"))
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3));assertTrue(activity.ui.pictureRestoreFailed)
+            activity.ui.dismissPictureHint();assertFalse(activity.ui.pictureRestoreFailed)
+            val count=requests;shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(30));assertEquals(count,requests)
+            activity.retryPicture();shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(3));assertTrue(activity.ui.pictureRestoreFailed)
+            lifecycle.pause().stop();assertFalse(activity.ui.pictureRestoreFailed)
+            shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(30));assertTrue(activity.ui.connected)
+        } finally {lifecycle.destroy();surface.release();texture.release()}
+    }
+
     @Test fun hostResolutionChangeFitsTheExistingSessionInsteadOfDisconnecting() {
         val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup();val activity=lifecycle.get()
         fun set(name:String,value:Any) {GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.set(activity,value)}

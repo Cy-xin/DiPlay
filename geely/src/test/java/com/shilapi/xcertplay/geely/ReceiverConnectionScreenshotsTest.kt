@@ -28,14 +28,19 @@ class ReceiverConnectionScreenshotsTest {
     @Test fun connectionAtLargeFontsCompactWideAndRtl() {
         for((name,width,height,language) in listOf(
             Case("compact-large",420,900,"zh-CN"),Case("wide-large",1280,720,"zh-CN"),Case("wide-rtl-large",1280,720,"ar-SA"),
-            Case("wheel-compact-large",420,900,"zh-CN"),Case("wheel-wide-large",1280,720,"zh-CN"),Case("wheel-rtl-large",1280,720,"ar-SA")
+            Case("wheel-compact-large",420,900,"zh-CN"),Case("wheel-wide-large",1280,720,"zh-CN"),Case("wheel-rtl-large",1280,720,"ar-SA"),
+            Case("picture-compact-light",420,900,"zh-CN"),Case("picture-wide-light",1280,720,"zh-CN"),Case("picture-rtl-light",1280,720,"ar-SA"),
+            Case("picture-compact-dark",420,900,"zh-CN"),Case("picture-wide-dark",1280,720,"zh-CN"),Case("picture-rtl-dark",1280,720,"ar-SA")
         )) {
             RuntimeEnvironment.setQualifiers("w${width}dp-h${height}dp-mdpi")
             val app=RuntimeEnvironment.getApplication()
-            val config=Configuration(app.resources.configuration).apply {fontScale=1.5f;val locale=Locale.forLanguageTag(language);setLocale(locale);setLayoutDirection(locale)}
+            val config=Configuration(app.resources.configuration).apply {fontScale=1.5f;uiMode=(uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or (if(name.endsWith("dark")) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO);val locale=Locale.forLanguageTag(language);setLocale(locale);setLayoutDirection(locale)}
             @Suppress("DEPRECATION") app.resources.updateConfiguration(config,app.resources.displayMetrics)
             val controller=Robolectric.buildActivity(GeelyActivity::class.java).setup().visible()
             try {
+                if(name.startsWith("picture-")) {
+                    controller.get().ui.connected=true;controller.get().ui.showCarPlay=true;controller.get().ui.pictureRestoreFailed=true
+                }
                 if(name.startsWith("wheel-")) controller.get().setContent {
                     ReceiverTheme(ReceiverThemeMode.SYSTEM) {
                         ReceiverScene(Modifier.fillMaxSize()) {GlassSurface(Modifier.fillMaxSize()) {

@@ -90,6 +90,9 @@ internal class ReceiverUiState {
     var stopping by mutableStateOf(false)
     var connected by mutableStateOf(false)
     var showCarPlay by mutableStateOf(false)
+    var pictureRestoreFailed by mutableStateOf(false)
+    var retryPicture:()->Unit={}
+    var dismissPictureHint:()->Unit={}
     var message by mutableStateOf("未连接。请先连接网络并配对蓝牙。")
     var wheelMappings by mutableStateOf(ReceiverWheelMapping.defaults)
     var wheelMappingKey by mutableIntStateOf(200087)
@@ -142,8 +145,11 @@ internal class ReceiverUiState {
         if(theme==null) Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
         if(theme!=null) {
             if(ui.connected && ui.showCarPlay) {
-                // Transparent, non-interactive host layer: all CarPlay touches reach SurfaceView.
-                Box(Modifier.fillMaxSize())
+                // Keep the host transparent; only a failed picture return exposes an action.
+                Box(Modifier.fillMaxSize()) {
+                    if(ui.pictureRestoreFailed) PictureRecoveryHint(ui,Modifier.align(Alignment.TopStart)
+                        .safeDrawingPadding().padding(ReceiverTokens.gap))
+                }
             } else {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal=ReceiverTokens.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -171,6 +177,25 @@ internal class ReceiverUiState {
     }
     }
     BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
+}
+
+@Composable internal fun PictureRecoveryHint(ui:ReceiverUiState,modifier:Modifier=Modifier) {
+    Surface(modifier.widthIn(max=ReceiverTokens.pictureHintWidth),shape=ReceiverTokens.control,
+        color=MaterialTheme.colorScheme.surface.copy(alpha=.96f),shadowElevation=ReceiverTokens.pictureHintElevation) {
+        BoxWithConstraints(Modifier.padding(horizontal=ReceiverTokens.gap)) {
+            @Composable fun message(modifier:Modifier=Modifier) {
+                Text(tr("暂未收到新画面","No new picture yet"),modifier.padding(vertical=ReceiverTokens.gap)
+                    .semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+            }
+            @Composable fun actions() {
+                TextButton({ui.retryPicture()},Modifier.heightIn(min=ReceiverTokens.touch)) {Text(tr("重试画面","Retry picture"))}
+                TextButton({ui.dismissPictureHint()},Modifier.heightIn(min=ReceiverTokens.touch)) {Text(tr("忽略","Dismiss"))}
+            }
+            if(maxWidth/LocalDensity.current.fontScale>=ReceiverTokens.pictureHintInlineWidth) {
+                Row(verticalAlignment=Alignment.CenterVertically) {message(Modifier.weight(1f));actions()}
+            } else Column {message();Row {actions()}}
+        }
+    }
 }
 
 @Composable private fun GlassIcon(kind:Int,modifier:Modifier=Modifier) {

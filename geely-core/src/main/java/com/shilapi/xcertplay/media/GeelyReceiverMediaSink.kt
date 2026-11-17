@@ -146,6 +146,7 @@ class AndroidMediaSink(
     @Volatile private var screenStreamActiveChanged = onScreenStreamActiveChanged
     private val surfaces = ConcurrentHashMap<Int, Surface>()
     private val videoDecoders = ConcurrentHashMap<Int, VideoDecoder>()
+    private val pictureFrames=PictureFrameSignal()
     // Surface capture, worker publication, retirement and detach snapshots share one ownership boundary.
     // Native codec work and waits never run under this lock.
     private val videoOwnershipLock = Any()
@@ -268,6 +269,7 @@ class AndroidMediaSink(
      * not exited yet are waited for too. [SurfaceDetach.await] returns the result.
      */
     fun beginSurfaceDetach(surface: Surface, parkMain: Boolean): SurfaceDetach {
+        pictureFrames.detach(surface)
         val deadline = System.nanoTime() + detachTimeoutNanos
         val requests = ArrayList<SurfaceDetachRequest>()
         val steps = ArrayList<() -> Boolean>()
@@ -356,6 +358,11 @@ class AndroidMediaSink(
     /** Requests a keyframe for stream [type], e.g. after its surface came back. */
     /** Running totals of the main screen's decoder for a live FPS counter; null while it has none. */
     fun liveVideoCounters(): LiveVideoCounters? = videoDecoders[MAIN_SCREEN_TYPE]?.liveCounters()
+
+    /** Counts only frames submitted by the active main decoder, across decoder replacements. */
+    fun pictureFrameSequence(surface:Surface):Long=pictureFrames.sequenceOn(surface)
+    fun observePictureFrame(surface:Surface,after:Long,notify:()->Unit):java.io.Closeable =
+        pictureFrames.observe(surface,after,notify)
 
     fun refreshPicture(type: Int) {
         videoDecoders[type]?.refreshPicture()
@@ -705,6 +712,7 @@ class AndroidMediaSink(
         runCatching { audioManager?.unregisterAudioDeviceCallback(audioDeviceCallback) }
         if (scoRegistered) runCatching { appContext?.unregisterReceiver(scoReceiver) }
         audioFocusCoordinator.close()
+        pictureFrames.close()
         audioOwnershipListener = null
 
         synchronized(videoOwnershipLock) {
@@ -761,6 +769,9 @@ class AndroidMediaSink(
         report = { videoDiagnosticHandlers[type]?.invoke(it) },
         statsLabel = statsLabel,
         onExit = ::onVideoDecoderExit,
+        onShown = {decoder,shownSurface ->
+            if(type==MAIN_SCREEN_TYPE && statsLabel==null && videoDecoders[type]===decoder) pictureFrames.onFrame(shownSurface)
+        },
         // Only the main screen goes to the host's SurfaceView; mirrors and the cluster keep their path.
         pacingDelayNanos = if (type == MAIN_SCREEN_TYPE && statsLabel == null) videoPacingDelayMillis * 1_000_000L else 0L,
         operatingRate = videoOperatingRate(type, statsLabel, mainVideoFrameRate),
@@ -980,6 +991,7 @@ private class VideoDecoder(
     pacingDelayNanos: Long = 0L,
     /** Called on the worker as its last step, after it has released its codec. */
     private val onExit: (VideoDecoder) -> Unit = {},
+    private val onShown:(VideoDecoder,Surface)->Unit={_,_->},
     operatingRate: Int = 0,
     /** Set [vendorLowLatencyKeys] on the tuned configure attempts. */
     private val vendorLowLatency: Boolean = false,
@@ -1698,6 +1710,7 @@ private class VideoDecoder(
                 if (shown) {
                     stats.onRendered()
                     liveRendered.incrementAndGet()
+                    outputSurface?.let {onShown(this,it)}
                 }
                 if (shown && !renderedFrameLogged) {
                     renderedFrameLogged = true

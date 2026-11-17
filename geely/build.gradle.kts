@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 135
-        versionName = "0.9.3-geely-siri-microphone"
+        versionCode = 136
+        versionName = "0.9.4-geely-picture-feedback"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {

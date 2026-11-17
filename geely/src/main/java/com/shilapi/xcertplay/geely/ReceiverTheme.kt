@@ -51,6 +51,9 @@ internal object ReceiverTokens {
     val page=20.dp
     val touch=48.dp
     val audioTestStatus=80.dp
+    val pictureHintWidth=560.dp
+    val pictureHintInlineWidth=400.dp
+    val pictureHintElevation=2.dp
     val panel=RoundedCornerShape(28.dp)
     val control=RoundedCornerShape(20.dp)
     val light=lightColorScheme(background=Color(0xFFDCEBFA),surface=Color(0xFFF3F8FF),
