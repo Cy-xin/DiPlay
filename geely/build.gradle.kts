@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 134
-        versionName = "0.9.2-geely-wheel-settings"
+        versionCode = 135
+        versionName = "0.9.3-geely-siri-microphone"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {
