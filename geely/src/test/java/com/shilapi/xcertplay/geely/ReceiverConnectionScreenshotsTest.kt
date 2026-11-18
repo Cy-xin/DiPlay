@@ -27,6 +27,7 @@ import java.util.Locale
 class ReceiverConnectionScreenshotsTest {
     @Test fun connectionAtLargeFontsCompactWideAndRtl() {
         for((name,width,height,language) in listOf(
+            Case("auto-compact-large",420,900,"zh-CN"),Case("auto-wide-large",1280,720,"zh-CN"),Case("auto-rtl-large",1280,720,"ar-SA"),
             Case("compact-large",420,900,"zh-CN"),Case("wide-large",1280,720,"zh-CN"),Case("wide-rtl-large",1280,720,"ar-SA"),
             Case("wheel-compact-large",420,900,"zh-CN"),Case("wheel-wide-large",1280,720,"zh-CN"),Case("wheel-rtl-large",1280,720,"ar-SA"),
             Case("picture-compact-light",420,900,"zh-CN"),Case("picture-wide-light",1280,720,"zh-CN"),Case("picture-rtl-light",1280,720,"ar-SA"),
@@ -41,11 +42,11 @@ class ReceiverConnectionScreenshotsTest {
                 if(name.startsWith("picture-")) {
                     controller.get().ui.connected=true;controller.get().ui.showCarPlay=true;controller.get().ui.pictureRestoreFailed=true
                 }
-                if(name.startsWith("wheel-")) controller.get().setContent {
+                if(name.startsWith("auto-") || name.startsWith("wheel-")) controller.get().setContent {
                     ReceiverTheme(ReceiverThemeMode.SYSTEM) {
                         ReceiverScene(Modifier.fillMaxSize()) {GlassSurface(Modifier.fillMaxSize()) {
                             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                                Text("方向盘按键");ReceiverWheelSettings(controller.get().ui)
+                                if(name.startsWith("auto-")) AutoConnectSetting(controller.get().ui) else {Text("方向盘按键");ReceiverWheelSettings(controller.get().ui)}
                             }
                         }}
                     }

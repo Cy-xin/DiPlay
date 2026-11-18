@@ -47,6 +47,8 @@ import kotlinx.coroutines.launch
 internal enum class ReceiverDialog { AUDIO, FPS, QUALITY, SIZE, DOCK, PHONE, LOGS, DIAGNOSTICS, PAIR_UPLOAD, AUDIO_ROUTE, WHEEL_MAPPING }
 internal class ReceiverUiState {
     var mode by mutableStateOf(ConnectionMode.CAR_HOTSPOT)
+    var autoConnectOnOpen by mutableStateOf(false)
+    var saveAutoConnectOnOpen:(Boolean)->Unit={}
     var audit:(String,String)->Unit={_,_->}
     var refreshLocalLog:()->Unit={}
     var exportLocalLog:()->Unit={}
@@ -401,6 +403,7 @@ internal class ReceiverUiState {
                     val connection=tr("连接","Connection");val playback=tr("音频与画面","Audio & display");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
                     val wheel=tr("方向盘","Steering wheel")
                     var found=false
+                    if(matches(connection,"自动连接","打开","启动","auto","launch")) {found=true;section(connection);AutoConnectSetting(ui)}
                     if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
                     if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
                     if(matches(playback,"音频","缓冲","audio","buffer")) {
@@ -481,6 +484,18 @@ internal class ReceiverUiState {
         }
     }
 }
+@Composable internal fun AutoConnectSetting(ui:ReceiverUiState) {
+    val label=tr("打开 DiPlay 自动连接","Connect when opening DiPlay")
+    Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.touch),verticalAlignment=Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end=ReceiverTokens.gap)) {
+            Text(label,fontSize=15.sp)
+            Text(tr("默认关闭，下次打开时生效。网络、蓝牙、权限及已保存配置就绪后尝试一次；已连接不重复连接，取消后不在当前页面反复尝试。不会打开 Wi-Fi。","Off by default; applies next time you open the app. Tries once when network, Bluetooth, permissions and saved settings are ready. Existing sessions are retained. Does not turn on Wi-Fi."),fontSize=13.sp)
+        }
+        Switch(ui.autoConnectOnOpen,{ui.saveAutoConnectOnOpen(it)},modifier=Modifier.heightIn(min=ReceiverTokens.touch)
+            .semantics {contentDescription=label})
+    }
+}
+
 @Composable internal fun ReceiverWheelSettings(ui:ReceiverUiState) {
     DisposableEffect(Unit) {onDispose {ui.stopWheelDetection()}}
     Text(tr("默认使用已实车确认的吉利按键。点击一项更改短按操作，保存后立即生效。","Defaults use verified Geely keys. Select a row to change its short-press action; changes apply immediately."),fontSize=13.sp)

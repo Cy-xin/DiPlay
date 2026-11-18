@@ -109,6 +109,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private val health=ReceiverHealth()
     private val recovery=ReceiverRecovery()
+    private val autoConnect=ReceiverAutoConnect()
     private var recoveryTask:Runnable?=null
     private var recovering=false
     private fun cancelRecovery() {
@@ -128,6 +129,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.audit={event,detail -> journal.event("operation",event,detail)}
         ui.exportLocalLog={exportLocalDiagnostics()}
         ui.openVehicleHome={openVehicleHome()}
+        ui.saveAutoConnectOnOpen={saveAutoConnectOnOpen(it)}
         ui.retryPicture={retryPicture()}
         ui.dismissPictureHint={pictureRecovery.stop();journal.event("video","picture_restore_dismissed")}
         ui.saveWheelMapping={key,action -> saveWheelMapping(key,action)}
@@ -177,7 +179,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         root=FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         surfaceWork=ReceiverSurfaceWork({root.postOnAnimation(it)},{root.removeCallbacks(it)},
             {token,surface -> !destroyed && foreground && token==generation && surface===currentSurface && (surface !is Surface || surface.isValid)},
-            {reason -> fitSessionSurface();if(reason!=null) restorePicture(reason)})
+            {reason -> fitSessionSurface();if(reason!=null) restorePicture(reason);maybeAutoConnect()})
         videoViewport=FrameLayout(this).apply {clipChildren=true;clipToPadding=true}
         video=SurfaceView(this)
         videoViewport.addView(video,FrameLayout.LayoutParams(-1,-1))
@@ -187,7 +189,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
         video.holder.addCallback(object: SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) { journal.event("video","surface_created");currentSurface=holder.surface; sink?.setSurface(110,holder.surface);requestSurfaceFit("surface_created") }
-            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format")}
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {journal.event("video","surface_changed","width=$w height=$h format=$format");maybeAutoConnect()}
             override fun surfaceDestroyed(holder: SurfaceHolder) {
                 detachSessionSurface(holder.surface)
             }
@@ -210,7 +212,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
                     onMode={ switchMode(it) },
                     onUpload={retry -> uploadDiagnostics(retry) },
                     onPairUpload={code -> pairDiagnostics(code) },
-                    onPrimary={ journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(recovering || busy) endAttempt("已取消连接") else {recovery.reset();connect()} },
+                    onPrimary={ autoConnect.suppress();journal.event("operation","primary_pressed","busy=$busy stopping=$stopping");if(connected) showCarPlay() else if(recovering || busy) endAttempt("已取消连接") else {recovery.reset();connect()} },
                     onDisconnect={ journal.event("operation","disconnect_pressed");endAttempt("已断开，可重新连接") },
                     onBluetooth={ journal.event("operation","open_system_bluetooth");saveInputs();startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) },
                     onPhone={ loadPhoneChoices() },
@@ -345,6 +347,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         journal.event("audio","output_mapping_reset","next_connection=true")
     }
     private fun refreshPlaybackLabels() {
+        ui.autoConnectOnOpen=store.prefs.getBoolean("auto_connect_on_open",false)
         ui.wheelMappings=ReceiverWheelMapping.load(store.prefs)
         ui.lowLatencyVideo=store.prefs.getBoolean("low_latency_video",false)
         ui.audioMappings=ReceiverAudioRole.entries.associateWith {ReceiverAudioRouting.sanitize(store.prefs.getString(it.preference,null))}
@@ -393,6 +396,41 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             ui.phoneChoices=listOf(null to "自动选择已配对的 iPhone")+devices.map { it.address to (it.name ?: "已配对设备") }
             ui.dialog=ReceiverDialog.PHONE
         } catch (_: SecurityException) { update("蓝牙权限已变化，请允许权限后重试。") }
+    }
+    internal fun saveAutoConnectOnOpen(enabled:Boolean) {
+        if(destroyed) return
+        store.prefs.edit().putBoolean("auto_connect_on_open",enabled).apply()
+        ui.autoConnectOnOpen=enabled
+        if(!enabled) autoConnect.suppress()
+        journal.event("operation","auto_connect_saved","enabled=$enabled applies=next_open")
+    }
+    internal fun maybeAutoConnect() {
+        if(destroyed || !autoConnect.take(ui.autoConnectOnOpen,foreground,video.width>=2 && video.height>=2)) return
+        fun skip(reason:String,message:String?=null) {
+            journal.event("connection","auto_connect_skipped","reason=$reason")
+            if(message!=null) update(message)
+        }
+        if(connected || busy || stopping || recovering || ui.testingAudioRole!=null || pendingPermissions) {skip("session_or_task_active");return}
+        if(ui.settingsOpen || ui.dialog!=null) {skip("user_editing");return}
+        if(runCatching {ReceiverConfig(mode,ui.ssid,ui.password,ui.networkInterface.trim(),phone).validate()}.isFailure) {
+            skip("configuration","自动连接未开始：请先保存有效的连接配置，再手动连接或下次打开时重试。");return
+        }
+        if(missingPermissions().isNotEmpty()) {
+            skip("permissions","自动连接未开始：首次请点击连接并允许必要权限，下次打开可自动连接。");return
+        }
+        if(runCatching {getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled==true}.getOrDefault(false).not()) {
+            skip("bluetooth","自动连接未开始：请开启蓝牙，再手动连接或下次打开时重试。");return
+        }
+        val networkReady=if(mode==ConnectionMode.CAR_HOTSPOT) runCatching {
+            val network=java.net.NetworkInterface.getByName(ui.networkInterface.trim())
+            network!=null && network.isUp && java.util.Collections.list(network.inetAddresses).any {!it.isLoopbackAddress && !it.isAnyLocalAddress}
+        }.getOrDefault(false) else runCatching {
+            val manager=getSystemService(android.net.ConnectivityManager::class.java)
+            manager.allNetworks.any {manager.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)==true}
+        }.getOrDefault(false)
+        if(!networkReady) {skip("network","自动连接未开始：网络尚未就绪，请先连接 Wi-Fi 或开启车机热点，再手动连接或重新打开应用。");return}
+        journal.event("connection","auto_connect_started","mode=$mode")
+        recovery.reset();connect()
     }
     private fun connect() {
         if(busy || stopping || controller!=null || destroyed || !foreground) {journal.event("connection","duplicate_or_inactive_blocked");return}
@@ -586,7 +624,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun endAttempt(reason:String)=endAttempt(reason,null)
     private fun endAttempt(reason:String,retryDelay:Long?) {
-        cancelRecovery()
+        autoConnect.suppress();cancelRecovery()
         if(stopping) return
         journal.event("connection","attempt_ending",reason,if(reason.contains("失败") || reason.contains("超时") || reason.contains("中断")) "ERROR" else "INFO")
         finishTiming(if(reason.contains("取消") || reason.contains("主动断开") || reason.contains("应用已关闭")) "cancelled" else "failed")
@@ -777,13 +815,13 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     override fun onResume() {super.onResume();journal.event("lifecycle","resume");requestSurfaceFit("resume")}
     override fun onPause() {journal.event("lifecycle","pause");super.onPause()}
-    override fun onStart() { super.onStart();foreground=true;journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
+    override fun onStart() { super.onStart();foreground=true;autoConnect.open(ui.autoConnectOnOpen);journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { surfaceWork?.cancel();stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { autoConnect.suppress();surfaceWork?.cancel();stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
         surfaceWork?.cancel();pictureRecovery.stop()
         ++audioTestGeneration;stopAudioTest()
