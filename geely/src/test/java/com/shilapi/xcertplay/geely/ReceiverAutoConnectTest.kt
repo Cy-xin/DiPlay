@@ -22,6 +22,14 @@ class ReceiverAutoConnectTest {
         policy.open(true);assertTrue(policy.take(true,true,true))
         policy.open(true);assertFalse(policy.take(false,true,true));assertFalse(policy.take(true,true,true))
     }
+    @Test fun programmaticConnectUsesTheSameRetryAndValidationPresentationAsTheButton() {
+        val lifecycle=Robolectric.buildActivity(GeelyActivity::class.java).setup()
+        try {
+            val activity=lifecycle.get();assertFalse(activity.ui.attempted)
+            GeelyActivity::class.java.getDeclaredMethod("connect").apply {isAccessible=true}.invoke(activity)
+            assertTrue(activity.ui.attempted)
+        } finally {lifecycle.pause().stop().destroy()}
+    }
     private fun field(activity:GeelyActivity,name:String):Any? = GeelyActivity::class.java.getDeclaredField(name).apply {isAccessible=true}.get(activity)
     @Test fun preferenceIsOffByDefaultPersistsAndNeverConnectsImmediatelyWhenEnabled() {
         val first=Robolectric.buildActivity(GeelyActivity::class.java).setup()

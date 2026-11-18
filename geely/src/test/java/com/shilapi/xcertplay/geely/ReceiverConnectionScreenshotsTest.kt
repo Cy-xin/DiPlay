@@ -1,6 +1,12 @@
 package com.shilapi.xcertplay.geely
 
-import androidx.activity.compose.setContent
+import androidx.compose.runtime.BroadcastFrameClock
+import androidx.compose.runtime.Recomposer
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.*
 import androidx.compose.material3.Text
@@ -38,24 +44,33 @@ class ReceiverConnectionScreenshotsTest {
             val config=Configuration(app.resources.configuration).apply {fontScale=1.5f;uiMode=(uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or (if(name.endsWith("dark")) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO);val locale=Locale.forLanguageTag(language);setLocale(locale);setLayoutDirection(locale)}
             @Suppress("DEPRECATION") app.resources.updateConfiguration(config,app.resources.displayMetrics)
             val controller=Robolectric.buildActivity(GeelyActivity::class.java).setup().visible()
+            val frames=BroadcastFrameClock()
+            val recomposer=Recomposer(Dispatchers.Unconfined+frames)
+            val rendering=CoroutineScope(Dispatchers.Unconfined+frames).launch {recomposer.runRecomposeAndApplyChanges()}
             try {
-                if(name.startsWith("picture-")) {
-                    controller.get().ui.connected=true;controller.get().ui.showCarPlay=true;controller.get().ui.pictureRestoreFailed=true
-                }
-                if(name.startsWith("auto-") || name.startsWith("wheel-")) controller.get().setContent {
+                val compose=ComposeView(controller.get()).apply {setParentCompositionContext(recomposer)}
+                controller.get().setContentView(compose)
+                compose.setContent {
                     ReceiverTheme(ReceiverThemeMode.SYSTEM) {
-                        ReceiverScene(Modifier.fillMaxSize()) {GlassSurface(Modifier.fillMaxSize()) {
-                            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                                if(name.startsWith("auto-")) AutoConnectSetting(controller.get().ui) else {Text("方向盘按键");ReceiverWheelSettings(controller.get().ui)}
+                        when {
+                            name.startsWith("picture-") -> Box(Modifier.fillMaxSize().background(Color.Black)) {
+                                PictureRecoveryHint(controller.get().ui,Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(ReceiverTokens.gap))
                             }
-                        }}
+                            name.startsWith("auto-") || name.startsWith("wheel-") -> ReceiverScene(Modifier.fillMaxSize()) {GlassSurface(Modifier.fillMaxSize()) {
+                                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                                    if(name.startsWith("auto-")) AutoConnectSetting(controller.get().ui) else {Text("方向盘按键");ReceiverWheelSettings(controller.get().ui)}
+                                }
+                            }}
+                            else -> ReceiverPages(controller.get().ui,ReceiverThemeMode.SYSTEM,false,{},{},{},{},{},{},{},{},{})
+                        }
                     }
                 }
                 val decor=controller.get().window.decorView
                 decor.measure(View.MeasureSpec.makeMeasureSpec(width,View.MeasureSpec.EXACTLY),View.MeasureSpec.makeMeasureSpec(height,View.MeasureSpec.EXACTLY))
                 decor.layout(0,0,width,height)
-                // DataStore initializes on IO; advancing only the main clock leaves the loading surface.
+                // Explicit theme + controlled frames keep snapshots independent of DataStore IO and window clocks.
                 repeat(25) {
+                    Snapshot.sendApplyNotifications();frames.sendFrame((it+1)*40_000_000L)
                     Thread.sleep(40)
                     Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(40))
                 }
@@ -67,7 +82,7 @@ class ReceiverConnectionScreenshotsTest {
                     val file=File("build/reports/receiver-ui/$name.png");file.parentFile.mkdirs()
                     file.outputStream().use {assertTrue(image.compress(Bitmap.CompressFormat.PNG,100,it))}
                 } finally {image.recycle()}
-            } finally {controller.pause().stop().destroy()}
+            } finally {recomposer.cancel();rendering.cancel();controller.pause().stop().destroy()}
         }
     }
     private data class Case(val name:String,val width:Int,val height:Int,val language:String)

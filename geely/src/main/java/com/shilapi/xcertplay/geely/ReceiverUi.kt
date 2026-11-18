@@ -14,6 +14,7 @@ import android.app.Activity
 import android.view.WindowInsetsController
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.shape.CircleShape
@@ -108,6 +108,10 @@ internal class ReceiverUiState {
     var testWheelAction:(Int)->Unit={}
     var openVehicleHome:()->Unit={}
     var settingsOpen by mutableStateOf(false)
+    var settingsQuery by mutableStateOf("")
+    var settingsGroup by mutableStateOf(ReceiverSettingsGroup.PLAYBACK)
+    var audioRoutingExpanded by mutableStateOf(false)
+    var wheelTestsExpanded by mutableStateOf(false)
     var dialog by mutableStateOf<ReceiverDialog?>(null)
     var phoneChoices by mutableStateOf<List<Pair<String?,String>>>(emptyList())
     var logs by mutableStateOf("")
@@ -116,6 +120,7 @@ internal class ReceiverUiState {
     val displayEditable get()=!stopping && (!busy || connected)
     fun dismissTopLayer():Boolean {
         if(dialog!=null) { audit("dialog_back","dialog=$dialog");dialog=if(dialog==ReceiverDialog.LOGS || dialog==ReceiverDialog.PAIR_UPLOAD) ReceiverDialog.DIAGNOSTICS else null;return true }
+        if(settingsOpen && settingsQuery.isNotBlank()) {audit("settings_search_back","");settingsQuery="";return true}
         if(settingsOpen) {audit("settings_back","");settingsOpen=false;return true }
         return false
     }
@@ -134,7 +139,7 @@ internal class ReceiverUiState {
     val scope=rememberCoroutineScope()
     var themeError by remember { mutableStateOf(false) }
     val density=LocalDensity.current
-    val vehicleScale=if(Build.MODEL.contains("KX11",ignoreCase=true)) 1.35f else 1f
+    val vehicleScale=ReceiverTokens.vehicleScale(Build.MODEL)
     CompositionLocalProvider(LocalDensity provides Density(density.density*vehicleScale,density.fontScale)) {
     ReceiverTheme(theme ?: ReceiverThemeMode.SYSTEM) {
         val dark=LocalReceiverDark.current
@@ -153,6 +158,23 @@ internal class ReceiverUiState {
                         .safeDrawingPadding().padding(ReceiverTokens.gap))
                 }
             } else {
+                ReceiverPages(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen,onMode,onPrimary,onDisconnect,onUpload) {mode ->
+                    ui.audit("theme_selected","mode=$mode")
+                    scope.launch {try {appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode")} catch(_:java.io.IOException) {themeError=true;ui.audit("theme_save_failed","")}}
+                }
+            }
+            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onDock,onUpload,onPairUpload)
+        }
+    }
+    }
+    BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
+}
+
+/** Stateless page renderer: appearance persistence remains owned by ReceiverApp. */
+@Composable internal fun ReceiverPages(
+    ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,
+    onFullscreen:(Boolean)->Unit,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onDisconnect:()->Unit,onUpload:(Boolean)->Unit,onTheme:(ReceiverThemeMode)->Unit,
+) {
                 ReceiverScene(Modifier.fillMaxSize()) {
                     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal=ReceiverTokens.page,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                         val page=when {
@@ -163,22 +185,13 @@ internal class ReceiverUiState {
                         ReceiverPageMotion(page,Modifier.weight(1f).fillMaxWidth()) {
                             when {
                                 ui.dialog in listOf(ReceiverDialog.DIAGNOSTICS,ReceiverDialog.PAIR_UPLOAD,ReceiverDialog.LOGS) -> DiagnosticPage(ui,onUpload,onLogs)
-                                ui.settingsOpen -> SettingsPanel(ui,theme!!,themeError,onBluetooth,onPhone,onLogs,onFullscreen) { mode ->
-                                    ui.audit("theme_selected","mode=$mode")
-                                    scope.launch { try { appearance.save(mode);themeError=false;ui.audit("theme_saved","mode=$mode") } catch(_:java.io.IOException) { themeError=true;ui.audit("theme_save_failed","") } }
-                                }
+                                ui.settingsOpen -> SettingsPanel(ui,theme,themeError,onBluetooth,onPhone,onLogs,onFullscreen,onTheme)
                                 else -> ConnectionPage(ui,onMode,onPrimary,onLogs,onDisconnect)
                             }
                         }
                         GlassNavigation(ui,onLogs)
                     }
                 }
-            }
-            ReceiverDialogs(ui,onPhoneSelected,onPlayback,onDisplay,onDock,onUpload,onPairUpload)
-        }
-    }
-    }
-    BackHandler(ui.settingsOpen || ui.dialog!=null) { ui.dismissTopLayer() }
 }
 
 @Composable internal fun PictureRecoveryHint(ui:ReceiverUiState,modifier:Modifier=Modifier) {
@@ -187,7 +200,7 @@ internal class ReceiverUiState {
         BoxWithConstraints(Modifier.padding(horizontal=ReceiverTokens.gap)) {
             @Composable fun message(modifier:Modifier=Modifier) {
                 Text(tr("暂未收到新画面","No new picture yet"),modifier.padding(vertical=ReceiverTokens.gap)
-                    .semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+                    .semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.secondaryText)
             }
             @Composable fun actions() {
                 TextButton({ui.retryPicture()},Modifier.heightIn(min=ReceiverTokens.touch)) {Text(tr("重试画面","Retry picture"))}
@@ -202,7 +215,7 @@ internal class ReceiverUiState {
 
 @Composable private fun GlassIcon(kind:Int,modifier:Modifier=Modifier) {
     val ink=LocalContentColor.current
-    Canvas(modifier.size(22.dp)) {
+    Canvas(modifier.size(ReceiverTokens.icon)) {
         val scale=size.minDimension/24f
         val stroke=Stroke(1.8f*scale,cap=androidx.compose.ui.graphics.StrokeCap.Round,join=androidx.compose.ui.graphics.StrokeJoin.Round)
         val path=Path()
@@ -212,6 +225,12 @@ internal class ReceiverUiState {
             1 -> {drawCircle(ink,radius=8f*scale,center=center,style=stroke);drawCircle(ink,radius=3f*scale,center=center,style=stroke);for(i in 0..3) {val x=if(i%2==0) 12f else if(i==1) 2f else 22f;val y=if(i%2==1) 12f else if(i==0) 2f else 22f;drawCircle(ink,radius=1.4f*scale,center=Offset(x*scale,y*scale))}}
             2 -> line(2f,12f,6f,12f,9f,4f,13f,20f,16f,10f,19f,12f,22f,12f)
             3 -> {line(3f,9f,8f,5f,16f,5f,21f,9f);line(6f,12f,9f,9f,15f,9f,18f,12f);line(10f,15f,12f,13f,14f,15f);drawCircle(ink,radius=1.2f*scale,center=Offset(12f*scale,18f*scale))}
+            5 -> line(5f,12f,10f,17f,20f,7f)
+            6 -> {line(12f,7f,12f,13f);drawCircle(ink,1f*scale,Offset(12f*scale,17f*scale));drawCircle(ink,9f*scale,center,style=stroke)}
+            7 -> {drawCircle(ink,9f*scale,center,style=stroke);line(12f,6f,12f,12f,16f,14f)}
+            8 -> {drawCircle(ink,9f*scale,center,style=stroke);line(6f,18f,18f,6f)}
+            9 -> line(6f,9f,12f,15f,18f,9f)
+            10 -> line(6f,15f,12f,9f,18f,15f)
             else -> {line(12f,4f,12f,10f);line(5f,14f,5f,10f,19f,10f,19f,14f);drawRect(ink,Offset(2f*scale,14f*scale),androidx.compose.ui.geometry.Size(6f*scale,5f*scale),style=stroke);drawRect(ink,Offset(16f*scale,14f*scale),androidx.compose.ui.geometry.Size(6f*scale,5f*scale),style=stroke)}
         }
         drawPath(path,ink,style=stroke)
@@ -234,8 +253,8 @@ internal class ReceiverUiState {
                     Surface(onClick={ui.audit("navigation_selected","tab=$i");ui.settingsOpen=i==1;ui.dialog=null;if(i==2) onLogs()},
                         modifier=Modifier.weight(1f).semantics {role=Role.Tab;this.selected=active},shape=CircleShape,
                         color=fill) {
-                        Row(Modifier.heightIn(min=48.dp).padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
-                            CompositionLocalProvider(LocalContentColor provides color) {GlassIcon(i);Spacer(Modifier.width(8.dp));Text(label,fontSize=14.sp,fontWeight=if(active) FontWeight.SemiBold else FontWeight.Normal)}
+                        Row(Modifier.heightIn(min=ReceiverTokens.touch).padding(horizontal=8.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
+                            CompositionLocalProvider(LocalContentColor provides color) {GlassIcon(i);Spacer(Modifier.width(8.dp));Text(label,fontSize=ReceiverTokens.secondaryText,fontWeight=if(active) FontWeight.SemiBold else FontWeight.Normal)}
                         }
                     }
                 }
@@ -246,8 +265,8 @@ internal class ReceiverUiState {
 @Composable private fun PageHeading(title:String,subtitle:String?=null,aside:@Composable ()->Unit={}) {
     Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(title,fontSize=24.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface)
-            if(subtitle!=null) Text(subtitle,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title,fontSize=ReceiverTokens.titleText,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurface)
+            if(subtitle!=null) Text(subtitle,fontSize=ReceiverTokens.captionText,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
         aside()
     }
@@ -255,19 +274,19 @@ internal class ReceiverUiState {
 @Composable private fun ConnectionPage(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,onPrimary:()->Unit,onLogs:()->Unit,onDisconnect:()->Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide=ReceiverLayoutPolicy.twoColumns(maxWidth.value,LocalDensity.current.fontScale)
-        val short=maxHeight/LocalDensity.current.fontScale<420.dp
+        val short=maxHeight/LocalDensity.current.fontScale<420.dp || maxWidth<maxHeight
         val horizontalModes=wide || maxWidth/LocalDensity.current.fontScale>=360.dp
         val horizontalFooter=wide || maxWidth>=600.dp
         Column(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                TextButton({ui.openVehicleHome()},Modifier.heightIn(min=48.dp)) {
-                    Text(tr("车机主页","Vehicle home"),fontSize=14.sp)
+                TextButton({ui.openVehicleHome()},Modifier.heightIn(min=ReceiverTokens.touch),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.onSurface)) {
+                    Text(tr("车机主页","Vehicle home"),fontSize=ReceiverTokens.secondaryText)
                 }
-                Text("DiPlay Geely",Modifier.weight(1f).padding(start=12.dp),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
-                GlassSurface {Text(if(ui.connected) tr("已连接","Connected") else if(ui.busy) tr("连接中","Connecting") else tr("未连接","Not connected"),Modifier.padding(horizontal=14.dp,vertical=8.dp),fontSize=12.sp)}
+                Text("DiPlay Geely",Modifier.weight(1f).padding(start=12.dp),fontSize=ReceiverTokens.bodyText,fontWeight=FontWeight.SemiBold)
+                ConnectionStateLabel(ui)
             }
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(if(short) 8.dp else 16.dp)) {
-                if(!short) Text(tr("连接，让旅途更轻松","Connect. Enjoy the journey."),fontSize=30.sp,fontWeight=FontWeight.Bold)
+                if(!short) Text(tr("连接，让旅途更轻松","Connect. Enjoy the journey."),fontSize=ReceiverTokens.heroText,fontWeight=FontWeight.Bold)
                 ModeChoices(ui,onMode,horizontalModes)
                 GlassSurface(Modifier.fillMaxWidth()) {
                     if(wide) Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(24.dp)) {
@@ -281,9 +300,9 @@ internal class ReceiverUiState {
     }
 }
 @Composable private fun ConfigurationHeading(ui:ReceiverUiState) {
-    Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("热点配置","Hotspot setup") else tr("局域网配置","Wi-Fi setup"),fontSize=18.sp,fontWeight=FontWeight.SemiBold)
+    Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("热点配置","Hotspot setup") else tr("局域网配置","Wi-Fi setup"),fontSize=ReceiverTokens.sectionText,fontWeight=FontWeight.SemiBold)
     Text(if(ui.mode==ConnectionMode.CAR_HOTSPOT) tr("开启车机热点，让 iPhone 加入同一网络，并完成蓝牙配对。","Turn on the car hotspot, join it on iPhone, and pair Bluetooth.")
-        else tr("两台设备加入同一 Wi-Fi 并配对蓝牙。网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        else tr("两台设备加入同一 Wi-Fi 并配对蓝牙。网络需允许设备互通和组播。","Join the same Wi-Fi and pair Bluetooth. Allow local traffic and multicast."),fontSize=ReceiverTokens.captionText,color=MaterialTheme.colorScheme.onSurfaceVariant)
 }
 @Composable private fun ModeChoices(ui:ReceiverUiState,onMode:(ConnectionMode)->Unit,horizontal:Boolean) {
     @Composable fun choice(mode:ConnectionMode,modifier:Modifier) {
@@ -291,12 +310,12 @@ internal class ReceiverUiState {
         val haptic=LocalHapticFeedback.current
         GlassSurface(modifier) {
             val fill=if(selected) Modifier.background(Brush.linearGradient(listOf(Color(0xFF0871D5),Color(0xFF0065DE)))) else Modifier
-            Row(Modifier.fillMaxWidth().then(fill).heightIn(min=56.dp).clickable(enabled=ui.editable) {haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onMode(mode)}
+            Row(Modifier.fillMaxWidth().then(fill).heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.editable) {haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onMode(mode)}
                 .semantics {role=Role.RadioButton;this.selected=selected}.padding(horizontal=16.dp,vertical=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                 CompositionLocalProvider(LocalContentColor provides if(selected) Color.White else MaterialTheme.colorScheme.onSurface) {
                     GlassIcon(if(mode==ConnectionMode.CAR_HOTSPOT) 3 else 4)
-                    Text(if(mode==ConnectionMode.CAR_HOTSPOT) tr("车机热点","Car hotspot") else tr("同一局域网","Same Wi-Fi"),Modifier.weight(1f),fontSize=16.sp,fontWeight=FontWeight.SemiBold)
-                    if(selected) Text("✓",fontSize=18.sp)
+                    Text(if(mode==ConnectionMode.CAR_HOTSPOT) tr("车机热点","Car hotspot") else tr("同一局域网","Same Wi-Fi"),Modifier.weight(1f),fontSize=ReceiverTokens.bodyText,fontWeight=FontWeight.SemiBold)
+                    if(selected) GlassIcon(5)
                 }
             }
         }
@@ -313,109 +332,161 @@ internal class ReceiverUiState {
     Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
         @Composable fun name(modifier:Modifier) {
             OutlinedTextField(ui.ssid,{ ui.audit("field_edited","field=network_name");ui.ssid=it },modifier,enabled=ui.editable,
-                textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
+                textStyle=LocalTextStyle.current.copy(fontSize=ReceiverTokens.bodyText),label={Text(tr("网络名称","Network name"))},singleLine=true,shape=ReceiverTokens.control,
                 isError=ui.attempted && ui.ssid.isBlank(),
                 supportingText=if(ui.attempted && ui.ssid.isBlank()) ({Text(tr("请输入网络名称","Enter the network name"))}) else null,
                 keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Next))
         }
         @Composable fun password(modifier:Modifier) {
             OutlinedTextField(ui.password,{ui.audit("field_edited","field=network_password");ui.password=it},modifier,enabled=ui.editable,
-                textStyle=LocalTextStyle.current.copy(fontSize=16.sp),label={Text(tr("网络密码","Network password"))},placeholder={Text(tr("开放网络可留空","Leave empty for an open network"))},
+                textStyle=LocalTextStyle.current.copy(fontSize=ReceiverTokens.bodyText),label={Text(tr("网络密码","Network password"))},placeholder={Text(tr("开放网络可留空","Leave empty for an open network"))},
                 visualTransformation=if(reveal) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Password,imeAction=ImeAction.Done),
-                trailingIcon={ TextButton({ui.audit("password_visibility","visible=${!reveal}");reveal=!reveal},Modifier.sizeIn(minWidth=56.dp,minHeight=56.dp)) {Text(if(reveal) tr("隐藏","Hide") else tr("显示","Show"))} },
+                trailingIcon={ TextButton({ui.audit("password_visibility","visible=${!reveal}");reveal=!reveal},Modifier.sizeIn(minWidth=ReceiverTokens.controlMin,minHeight=ReceiverTokens.controlMin)) {Text(if(reveal) tr("隐藏","Hide") else tr("显示","Show"))} },
                 singleLine=true,shape=ReceiverTokens.control)
         }
         if(inline) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.Top) {
             name(Modifier.weight(1f));password(Modifier.weight(1f))
         } else { name(Modifier.fillMaxWidth());password(Modifier.fillMaxWidth()) }
-        TextButton({advanced=!advanced;ui.audit("connection_advanced","expanded=$advanced")},Modifier.heightIn(min=48.dp)) {Text(tr("高级选项","Advanced options")+if(advanced) "  −" else "  +",fontSize=14.sp)}
+        TextButton({advanced=!advanced;ui.audit("connection_advanced","expanded=$advanced")},Modifier.heightIn(min=ReceiverTokens.touch)) {Text(tr("高级选项","Advanced options"),fontSize=ReceiverTokens.secondaryText);GlassIcon(if(advanced) 10 else 9)}
         AnimatedVisibility(advanced,
             enter=expandVertically(tween(ReceiverMotion.expandMs,easing=ReceiverMotion.ease))+fadeIn(tween(160)),
             exit=shrinkVertically(tween(ReceiverMotion.expandMs,easing=ReceiverMotion.ease))+fadeOut(tween(120))) {
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             if(ui.mode==ConnectionMode.CAR_HOTSPOT) OutlinedTextField(ui.networkInterface,{ui.audit("field_edited","field=network_interface");ui.networkInterface=it},Modifier.fillMaxWidth(),enabled=ui.editable,
                 label={Text(tr("热点网络接口","Hotspot network interface"))},singleLine=true,shape=ReceiverTokens.control)
-            Text(tr("已配对 iPhone 可在设置中选择。","Choose a paired iPhone in Settings."),fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(tr("已配对 iPhone 可在设置中选择。","Choose a paired iPhone in Settings."),fontSize=ReceiverTokens.captionText,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+@Composable private fun ConnectionStateLabel(ui:ReceiverUiState) {
+    val (icon,label)=when {
+        ui.stopping -> 7 to tr("正在断开","Disconnecting")
+        ui.connected -> 5 to tr("已连接","Connected")
+        ui.busy -> 7 to tr("连接中","Connecting")
+        ui.attempted -> 6 to tr("连接已结束","Connection ended")
+        else -> 8 to tr("未连接","Not connected")
+    }
+    Row(Modifier.semantics(mergeDescendants=true) {}.padding(ReceiverTokens.gap),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {
+        GlassIcon(icon);Text(label,fontSize=ReceiverTokens.metaText)
     }
 }
 @Composable private fun ConnectionFooter(ui:ReceiverUiState,wide:Boolean,onPrimary:()->Unit,onLogs:()->Unit,onDisconnect:()->Unit) {
     val keyboard=LocalSoftwareKeyboardController.current
     val focus=LocalFocusManager.current
     val haptic=LocalHapticFeedback.current
+    var expanded by rememberSaveable(ui.message) {mutableStateOf(false)}
     @Composable fun status(modifier:Modifier) {
-        Column(modifier.semantics { liveRegion=LiveRegionMode.Polite }) {
-            if(ui.busy && !ui.connected && !ui.stopping) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom=8.dp))
-            Text(tr(ui.message,receiverStatusEnglish(ui.message)),fontSize=14.sp,color=MaterialTheme.colorScheme.onSurface,maxLines=2,overflow=TextOverflow.Ellipsis)
-            if(ui.connected) TextButton(onDisconnect,enabled=!ui.stopping) {Text(tr("断开连接","Disconnect"))}
+        Column(modifier) {
+            SelectionContainer {
+                Text(tr(ui.message,receiverStatusEnglish(ui.message)),
+                    Modifier.fillMaxWidth().heightIn(max=if(expanded) ReceiverTokens.statusMax else ReceiverTokens.statusPreviewMax)
+                        .verticalScroll(rememberScrollState()).testTag("connection-message").semantics {liveRegion=LiveRegionMode.Polite},
+                    fontSize=ReceiverTokens.secondaryText,color=MaterialTheme.colorScheme.onSurface)
+            }
+            Row(horizontalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {
+                TextButton({expanded=!expanded},Modifier.heightIn(min=ReceiverTokens.touch).testTag("status-expand"),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.onSurface)) {
+                    Text(if(expanded) tr("收起状态","Collapse status") else tr("展开状态","Expand status"))
+                }
+                if(ui.connected) TextButton(onDisconnect,enabled=!ui.stopping,modifier=Modifier.heightIn(min=ReceiverTokens.touch),colors=ButtonDefaults.textButtonColors(contentColor=MaterialTheme.colorScheme.onSurface)) {Text(tr("断开连接","Disconnect"))}
+            }
         }
     }
     @Composable fun action(modifier:Modifier) {
         val presses=remember {MutableInteractionSource()}
-        Button({ ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary() },
-            modifier.heightIn(min=56.dp).receiverPressMotion(presses),enabled=!ui.stopping,shape=CircleShape,interactionSource=presses) {
-            Text(if(ui.stopping) tr("正在结束连接…","Finishing…") else if(ui.connected) tr("返回 CarPlay","Return to CarPlay") else if(ui.busy) tr("取消连接","Cancel connection") else tr("连接 CarPlay","Connect CarPlay"),fontSize=16.sp)
+        Button({ui.attempted=true;keyboard?.hide();focus.clearFocus();haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove);onPrimary()},
+            modifier.heightIn(min=ReceiverTokens.controlMin).receiverPressMotion(presses).testTag("connection-primary"),enabled=!ui.stopping,shape=CircleShape,interactionSource=presses) {
+            Text(when {
+                ui.stopping -> tr("正在结束连接…","Finishing…")
+                ui.connected -> tr("返回 CarPlay","Return to CarPlay")
+                ui.busy -> tr("取消连接","Cancel connection")
+                ui.attempted -> tr("重试连接","Retry connection")
+                else -> tr("连接 CarPlay","Connect CarPlay")
+            },fontSize=ReceiverTokens.bodyText)
         }
     }
-    Box(Modifier.fillMaxWidth()) {
-        if(wide) Row(Modifier.padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(24.dp)) {
-            action(Modifier.width(300.dp))
-            status(Modifier.weight(1f))
-            if(!ui.busy && ui.message!="未连接。请先连接网络并配对蓝牙。") TextButton(onLogs,Modifier.heightIn(min=48.dp)) {Text(tr("详情","Details"))}
-        } else Column(Modifier.padding(vertical=4.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())}
+    if(wide) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(ReceiverTokens.page)) {
+        action(Modifier.widthIn(max=ReceiverTokens.actionWidth).weight(.38f));status(Modifier.weight(.62f))
+    } else Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {
+        status(Modifier.fillMaxWidth());action(Modifier.fillMaxWidth())
     }
 }
 @Composable private fun SettingsPanel(ui:ReceiverUiState,theme:ReceiverThemeMode,themeError:Boolean,onBluetooth:()->Unit,onPhone:()->Unit,onLogs:()->Unit,onFullscreen:(Boolean)->Unit,onTheme:(ReceiverThemeMode)->Unit) {
-    var query by rememberSaveable {mutableStateOf("")}
-    var settingsGroup by rememberSaveable {mutableIntStateOf(1)}
+
     val keyboard=LocalSoftwareKeyboardController.current
     val focus=LocalFocusManager.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide=maxWidth>=840.dp
+        val wide=maxWidth/LocalDensity.current.fontScale>=840.dp
         GlassSurface(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(20.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically) {
-                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=24.sp,fontWeight=FontWeight.Bold)
-                    if(wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.width(300.dp),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
+                    Text(tr("设置","Settings"),Modifier.weight(1f),fontSize=ReceiverTokens.titleText,fontWeight=FontWeight.Bold)
+                    if(wide) OutlinedTextField(ui.settingsQuery,{ui.audit("settings_search_edited","");ui.settingsQuery=it},Modifier.width(300.dp).testTag("settings-search"),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide();focus.clearFocus()}))
-                    TextButton({ui.audit("settings_close","");ui.settingsOpen=false},Modifier.heightIn(min=56.dp)) { Text(tr("返回","Back")) }
+                    TextButton({ui.audit("settings_close","");if(ui.settingsQuery.isNotBlank()) ui.settingsQuery="" else ui.settingsOpen=false},Modifier.heightIn(min=ReceiverTokens.touch)) { Text(if(ui.settingsQuery.isNotBlank()) tr("返回设置","Back to settings") else tr("返回","Back")) }
                 }
-                if(!wide) OutlinedTextField(query,{ui.audit("settings_search_edited","");query=it},Modifier.fillMaxWidth(),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
+                if(!wide) OutlinedTextField(ui.settingsQuery,{ui.audit("settings_search_edited","");ui.settingsQuery=it},Modifier.fillMaxWidth().testTag("settings-search"),label={Text(tr("查找设置","Find a setting"))},singleLine=true,shape=ReceiverTokens.control,
                         keyboardOptions=KeyboardOptions(imeAction=ImeAction.Done),keyboardActions=KeyboardActions(onDone={keyboard?.hide();focus.clearFocus()}))
-                if(ui.reconnectNeeded) Text(tr("设置已保存，下次连接生效。","Settings saved. Applies next connection."),fontSize=13.sp,color=MaterialTheme.colorScheme.primary)
+                if(ui.reconnectNeeded) Text(tr("设置已保存，下次连接生效。","Settings saved. Applies next connection."),fontSize=ReceiverTokens.captionText,color=MaterialTheme.colorScheme.primary)
                 if(ui.notice.isNotEmpty()) Text(tr(ui.notice,receiverStatusEnglish(ui.notice)),
-                    Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+                    Modifier.heightIn(max=ReceiverTokens.statusMax).verticalScroll(rememberScrollState()).semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.secondaryText)
                 Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
-                    val groups=listOf(tr("连接","Connection"),tr("音频与画面","Audio & display"),tr("外观","Appearance"),tr("方向盘","Steering wheel"))
-                    if(wide && query.isBlank()) Column(Modifier.width(180.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                        groups.forEachIndexed {index,label ->
-                            Surface(onClick={settingsGroup=index;ui.audit("settings_group","index=$index")},shape=ReceiverTokens.control,
-                                color=if(index==settingsGroup) MaterialTheme.colorScheme.primaryContainer.copy(alpha=.75f) else Color.Transparent) {
-                                Text(label,Modifier.fillMaxWidth().padding(16.dp),fontSize=15.sp,fontWeight=FontWeight.SemiBold)
+                    val groups=ReceiverSettingsGroup.entries
+                    @Composable fun groupTabs(modifier:Modifier,vertical:Boolean) {
+                        @Composable fun tab(group:ReceiverSettingsGroup) {
+                            Surface(onClick={ui.settingsGroup=group;ui.audit("settings_group","id=${group.name}")},shape=ReceiverTokens.control,
+                                modifier=Modifier.semantics {role=Role.Tab;selected=ui.settingsGroup==group},
+                                color=if(group==ui.settingsGroup) MaterialTheme.colorScheme.primaryContainer else Color.Transparent) {
+                                Text(tr(group.zh,group.en),Modifier.heightIn(min=ReceiverTokens.touch).padding(ReceiverTokens.gap),fontSize=ReceiverTokens.labelText,fontWeight=FontWeight.SemiBold)
                             }
                         }
+                        if(vertical) Column(modifier.selectableGroup(),verticalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {groups.forEach {tab(it)}}
+                        else Row(modifier.horizontalScroll(rememberScrollState()).selectableGroup(),horizontalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {groups.forEach {tab(it)}}
                     }
-                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    fun matches(vararg words:String)=if(query.isNotBlank()) words.any {it.contains(query,true)} else !wide || words.firstOrNull()==groups[settingsGroup]
-                    @Composable fun section(title:String) { Text(title,Modifier.padding(top=16.dp,bottom=4.dp),fontSize=14.sp,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary) }
-                    val connection=tr("连接","Connection");val playback=tr("音频与画面","Audio & display");val appearance=tr("外观","Appearance");val diagnostics=tr("诊断","Diagnostics")
-                    val wheel=tr("方向盘","Steering wheel")
+                    if(wide && ui.settingsQuery.isBlank()) groupTabs(Modifier.width(180.dp).verticalScroll(rememberScrollState()),true)
+                    Column(Modifier.weight(1f)) {
+                    if(!wide && ui.settingsQuery.isBlank()) groupTabs(Modifier.fillMaxWidth(),false)
+                    key(ui.settingsGroup,ui.settingsQuery) {
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).testTag("settings-results"),verticalArrangement=Arrangement.spacedBy(ReceiverTokens.gap)) {
+                    fun matches(id:ReceiverSetting)=id.visible(ui.settingsQuery,ui.settingsGroup)
+                    @Composable fun section(title:String) {Text(title,Modifier.padding(top=ReceiverTokens.page,bottom=ReceiverTokens.gap),fontSize=ReceiverTokens.secondaryText,fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.primary)}
                     var found=false
-                    if(matches(connection,"自动连接","打开","启动","auto","launch")) {found=true;section(connection);AutoConnectSetting(ui)}
-                    if(matches(connection,"蓝牙配对","Bluetooth")) {found=true;section(connection);SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
-                    if(matches(connection,"iPhone","手机")) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
-                    if(matches(playback,"音频","缓冲","audio","buffer")) {
-                        found=true;section(playback);SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
+                    if(matches(ReceiverSetting.AUTO_CONNECT)) {found=true;section(tr("连接","Connection"));AutoConnectSetting(ui)}
+                    if(matches(ReceiverSetting.BLUETOOTH)) {found=true;SettingsRow(tr("蓝牙配对","Pair Bluetooth"),tr("打开系统蓝牙设置","Open system Bluetooth settings"),ui.editable,onBluetooth)}
+                    if(matches(ReceiverSetting.PHONE)) {found=true;SettingsRow(tr("已配对 iPhone","Paired iPhone"),(if(ui.phoneName=="自动选择已配对的 iPhone") tr(ui.phoneName,"Choose paired iPhone automatically") else ui.phoneName),ui.editable,onPhone)}
+                    if(matches(ReceiverSetting.BUFFER)) {
+                        found=true;section(tr("音频与画面","Audio & display"));SettingsRow(tr("音频缓冲","Audio buffer"),"${ui.bufferMs}ms · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("audio_picker_open","");ui.dialog=ReceiverDialog.AUDIO}
                     }
-                    if(matches(playback,"通道","映射","音乐","导航","电话","语音","铃声","routing","channel","Siri")) {
+                    if(matches(ReceiverSetting.WHEEL)) {
+                        found=true;section(tr("方向盘按键","Steering-wheel keys"))
+                        ReceiverWheelSettings(ui,ui.settingsQuery.isNotBlank())
+                    }
+                    if(matches(ReceiverSetting.FPS)) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
+                    if(matches(ReceiverSetting.QUALITY)) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
+                    if(matches(ReceiverSetting.SIZE)) {found=true;SettingsRow(tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"),"${ui.carPlaySize}% · "+tr("下次连接生效","Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.SIZE}}
+                    if(matches(ReceiverSetting.DOCK)) {found=true;SettingsRow(tr("CarPlay 菜单栏位置","CarPlay dock position"),ReceiverDockPosition.from(ui.dockPosition).title+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.DOCK}}
+                    if(matches(ReceiverSetting.DISPLAY_INFO) && ui.displayApplied.isNotBlank()) {found=true;Text(ui.displayApplied,fontSize=ReceiverTokens.captionText,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    if(matches(ReceiverSetting.LOW_LATENCY)) {
+                        found=true
+                        Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin),verticalAlignment=Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("低延迟解码（实验性）","Low-latency decoding (experimental)"),fontSize=ReceiverTokens.labelText)
+                                Text(tr("复用原版解码与独立输出线程，下次连接生效。开启后若画面异常可关闭恢复标准模式。","Uses upstream decoder tuning and a dedicated output thread. Applies next connection; switch off to restore standard mode if needed."),fontSize=ReceiverTokens.captionText)
+                            }
+                            Switch(ui.lowLatencyVideo,{ui.saveLowLatencyVideo(it)},enabled=ui.displayEditable)
+                        }
+                    }
+                    if(matches(ReceiverSetting.AUDIO_ROUTE)) {
                         found=true;section(tr("音频通道映射","Audio output mapping"))
+                        Text(tr("下次连接生效。跨类映射会改变声音分类和优先级；手动改错可恢复默认。测试前请断开 CarPlay 并调低音量。","Applies next connection. Cross-category mapping changes sound priority. Reset defaults if needed. Disconnect CarPlay and lower volume before testing."),fontSize=ReceiverTokens.captionText)
+                        val routingOpen=ui.audioRoutingExpanded || ui.settingsQuery.isNotBlank()
+                        SettingsDisclosure(tr("输出通道与 5 秒测试","Outputs & 5-second tests"),routingOpen,ui.settingsQuery.isBlank()) {ui.audioRoutingExpanded=!ui.audioRoutingExpanded}
+                        if(routingOpen) {
                         DisposableEffect(Unit) {onDispose {ui.stopAudioTest()}}
-                        Text(tr("每项可播放 5 秒低电平测试音。先调低原车音量，再调整对应滑块核对；测试前请断开 CarPlay。","Each test plays a low-level tone for 5 seconds. Start with low car volume and adjust the corresponding slider. Disconnect CarPlay before testing."),fontSize=13.sp)
+                        Text(tr("每项可播放 5 秒低电平测试音。先调低原车音量，再调整对应滑块核对；测试前请断开 CarPlay。","Each test plays a low-level tone for 5 seconds. Start with low car volume and adjust the corresponding slider. Disconnect CarPlay before testing."),fontSize=ReceiverTokens.captionText)
                         Text(ui.audioTestMessage.ifBlank {tr("选择一项开始测试，可随时停止。测试音不能代替真实 CarPlay 通话或导航验证。","Choose a test and stop at any time. Tones do not replace real CarPlay call or guidance validation.")},
-                            Modifier.fillMaxWidth().height(ReceiverTokens.audioTestStatus).verticalScroll(rememberScrollState()).semantics {liveRegion=LiveRegionMode.Polite},fontSize=13.sp,lineHeight=18.sp)
-                        Text(tr("下次连接生效。让原车对应音量分组控制 CarPlay；手动改错可恢复默认。","Applies next connection. Use the car's volume groups for CarPlay; reset defaults if needed."),fontSize=13.sp)
+                            Modifier.fillMaxWidth().height(ReceiverTokens.audioTestStatus).verticalScroll(rememberScrollState()).semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.captionText,lineHeight=ReceiverTokens.captionLine)
                         ReceiverAudioRole.entries.forEach {role ->
                             val choice=ui.audioMappings[role] ?: ReceiverAudioRouting.AUTO
                             val bus=ReceiverAudioRouting.bus(role,choice,Build.MODEL)
@@ -432,52 +503,39 @@ internal class ReceiverUiState {
                             }
                         }
                         TextButton({ui.resetAudioMappings()},enabled=ui.displayEditable) {Text(tr("恢复默认音频映射","Reset audio mapping"))}
-                        Text(tr("通道已检测不代表已成功切换；以连接诊断和实车音量效果为准。通话与铃声在本车配置中共用音量组。","Detection does not prove routing; verify diagnostics and actual volume behavior. Calls and ringtone share a volume group on this car."),fontSize=13.sp)
-                    }
-                    if(matches(playback,"低延迟","解码","latency","decoder")) {
-                        found=true
-                        Row(Modifier.fillMaxWidth().heightIn(min=64.dp),verticalAlignment=Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(tr("低延迟解码（实验性）","Low-latency decoding (experimental)"),fontSize=15.sp)
-                                Text(tr("复用原版解码与独立输出线程，下次连接生效。开启后若画面异常可关闭恢复标准模式。","Uses upstream decoder tuning and a dedicated output thread. Applies next connection; switch off to restore standard mode if needed."),fontSize=13.sp)
-                            }
-                            Switch(ui.lowLatencyVideo,{ui.saveLowLatencyVideo(it)},enabled=ui.displayEditable)
                         }
+                        Text(tr("通道已检测不代表已成功切换；以连接诊断和实车音量效果为准。通话与铃声在本车配置中共用音量组。","Detection does not prove routing; verify diagnostics and actual volume behavior. Calls and ringtone share a volume group on this car."),fontSize=ReceiverTokens.captionText)
                     }
-                    if(matches(wheel,"按键","映射","下一首","上一首","播放","暂停","wheel","key","MODE","Siri")) {
-                        found=true;section(tr("方向盘按键","Steering-wheel keys"))
-                        ReceiverWheelSettings(ui)
-                    }
-                    if(matches(playback,"帧率","fps","frame")) {found=true;SettingsRow(tr("CarPlay 帧率","CarPlay frame rate"),"${ui.fps} fps · "+tr("下次连接生效","Next connection"),ui.editable) {ui.audit("fps_picker_open","");ui.dialog=ReceiverDialog.FPS}}
-                    if(matches(playback,"清晰度","分辨率","resolution","quality")) {found=true;SettingsRow(tr("画面清晰度（实验性）","Picture detail (experimental)"),(if(ui.quality==125) tr("高清 125%","HD 125%") else tr("标准 · 匹配屏幕","Standard · match screen"))+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.QUALITY}}
-                    if(matches(playback,"界面大小","图标","缩放","size","scale")) {found=true;SettingsRow(tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"),"${ui.carPlaySize}% · "+tr("下次连接生效","Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.SIZE}}
-                    if(matches(playback,"菜单栏","位置","dock","position")) {found=true;SettingsRow(tr("CarPlay 菜单栏位置","CarPlay dock position"),ReceiverDockPosition.from(ui.dockPosition).title+tr(" · 下次连接生效"," · Next connection"),ui.displayEditable) {ui.dialog=ReceiverDialog.DOCK}}
-                    if(matches(playback,"画面信息","display" ) && ui.displayApplied.isNotBlank()) {found=true;Text(ui.displayApplied,fontSize=13.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    if(matches(appearance,"主题","theme","浅色","深色","系统")) {
-                        found=true;section(appearance)
+                    if(matches(ReceiverSetting.THEME)) {
+                        found=true;section(tr("外观","Appearance"))
                         ReceiverThemeMode.entries.forEach { mode ->
-                            Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable {onTheme(mode)}.semantics {role=Role.RadioButton;selected=mode==theme},verticalAlignment=Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable {onTheme(mode)}.semantics {role=Role.RadioButton;selected=mode==theme},verticalAlignment=Alignment.CenterVertically) {
                                 RadioButton(mode==theme,null)
-                                Text(when(mode) {ReceiverThemeMode.SYSTEM->tr("跟随系统","Follow system");ReceiverThemeMode.LIGHT->tr("浅色","Light");else->tr("深色","Dark")},fontSize=14.sp)
+                                Text(when(mode) {ReceiverThemeMode.SYSTEM->tr("跟随系统","Follow system");ReceiverThemeMode.LIGHT->tr("浅色","Light");else->tr("深色","Dark")},fontSize=ReceiverTokens.secondaryText)
                             }
                         }
                         if(themeError) Text(tr("外观保存失败，请重试。","Could not save appearance. Try again."),color=MaterialTheme.colorScheme.error)
                     }
-                    if(matches(appearance,"全屏","状态栏","侧边栏","导航栏","fullscreen","system bars","sidebar")) {
+                    if(matches(ReceiverSetting.SYSTEM_BARS)) {
                         found=true
-                        Row(Modifier.fillMaxWidth().heightIn(min=56.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin),verticalAlignment=Alignment.CenterVertically) {
                             Column(Modifier.weight(1f).padding(end=12.dp)) {
-                                Text(tr("隐藏状态栏和侧边栏","Hide status and navigation bars"),fontSize=16.sp)
+                                Text(tr("隐藏状态栏和侧边栏","Hide status and navigation bars"),fontSize=ReceiverTokens.bodyText)
                                 Text(tr("仅在本应用内生效。车机侧栏是否支持取决于系统；边缘滑动可临时呼出。连接中不可修改。",
                                     "Applies in this app only. OEM sidebars may remain. Swipe from an edge to reveal bars. Change while disconnected."),
-                                    fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                                    fontSize=ReceiverTokens.secondaryText,color=MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(ui.hideSystemBars,onCheckedChange=onFullscreen,enabled=ui.editable,
                                 modifier=Modifier.semantics {contentDescription="隐藏状态栏和侧边栏 / Hide system bars"})
                         }
                     }
 
+                    if(matches(ReceiverSetting.DIAGNOSTICS)) {
+                        found=true;SettingsRow(tr("诊断与日志","Diagnostics & logs"),tr("连接自检、运行指标、配对与上传","Connection checks, metrics, pairing & upload"),true,onLogs)
+                    }
                     if(!found) Text(tr("未找到设置，请换个关键词。","No settings found. Try another keyword."),Modifier.padding(16.dp))
+                    }
+                    }
                     }
                 }
             }
@@ -488,42 +546,54 @@ internal class ReceiverUiState {
     val label=tr("打开 DiPlay 自动连接","Connect when opening DiPlay")
     Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.touch),verticalAlignment=Alignment.CenterVertically) {
         Column(Modifier.weight(1f).padding(end=ReceiverTokens.gap)) {
-            Text(label,fontSize=15.sp)
-            Text(tr("默认关闭，下次打开时生效。网络、蓝牙、权限及已保存配置就绪后尝试一次；已连接不重复连接，取消后不在当前页面反复尝试。不会打开 Wi-Fi。","Off by default; applies next time you open the app. Tries once when network, Bluetooth, permissions and saved settings are ready. Existing sessions are retained. Does not turn on Wi-Fi."),fontSize=13.sp)
+            Text(label,fontSize=ReceiverTokens.labelText)
+            Text(tr("默认关闭，下次打开时生效。网络、蓝牙、权限及已保存配置就绪后尝试一次；已连接不重复连接，取消后不在当前页面反复尝试。不会打开 Wi-Fi。","Off by default; applies next time you open the app. Tries once when network, Bluetooth, permissions and saved settings are ready. Existing sessions are retained. Does not turn on Wi-Fi."),fontSize=ReceiverTokens.captionText)
         }
         Switch(ui.autoConnectOnOpen,{ui.saveAutoConnectOnOpen(it)},modifier=Modifier.heightIn(min=ReceiverTokens.touch)
             .semantics {contentDescription=label})
     }
 }
 
-@Composable internal fun ReceiverWheelSettings(ui:ReceiverUiState) {
+@Composable private fun SettingsDisclosure(title:String,expanded:Boolean,enabled:Boolean=true,onClick:()->Unit) {
+    val state=if(expanded) tr("已展开","Expanded") else tr("已收起","Collapsed")
+    if(enabled) TextButton(onClick,Modifier.heightIn(min=ReceiverTokens.touch).testTag("settings-disclosure").semantics {stateDescription=state}) {
+        Text(title,fontSize=ReceiverTokens.secondaryText);GlassIcon(if(expanded) 10 else 9)
+    } else Row(Modifier.heightIn(min=ReceiverTokens.touch).semantics {heading()},verticalAlignment=Alignment.CenterVertically) {
+        Text(title,fontSize=ReceiverTokens.secondaryText);GlassIcon(10)
+    }
+}
+@Composable internal fun ReceiverWheelSettings(ui:ReceiverUiState,searching:Boolean=false) {
     DisposableEffect(Unit) {onDispose {ui.stopWheelDetection()}}
-    Text(tr("默认使用已实车确认的吉利按键。点击一项更改短按操作，保存后立即生效。","Defaults use verified Geely keys. Select a row to change its short-press action; changes apply immediately."),fontSize=13.sp)
+    Text(tr("默认使用已实车确认的吉利按键。点击一项更改短按操作，保存后立即生效。","Defaults use verified Geely keys. Select a row to change its short-press action; changes apply immediately."),fontSize=ReceiverTokens.captionText)
+    val testsOpen=ui.wheelTestsExpanded || searching
     ReceiverWheelButton.entries.forEach {button ->
         val action=ui.wheelMappings[button.key] ?: button.defaultAction
         SettingsRow(tr(button.title,button.english),tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action))+" · ${button.key}",ui.displayEditable && !ui.wheelDetecting) {
             ui.wheelMappingKey=button.key;ui.dialog=ReceiverDialog.WHEEL_MAPPING
         }
-        OutlinedButton({ui.testWheelAction(action)},enabled=ui.connected && !ui.stopping && !ui.wheelDetecting && action!=0,modifier=Modifier.heightIn(min=48.dp)) {
+        if(testsOpen) OutlinedButton({ui.testWheelAction(action)},enabled=ui.connected && !ui.stopping && !ui.wheelDetecting && action!=0,modifier=Modifier.heightIn(min=ReceiverTokens.touch)) {
             Text(tr("测试控制：","Test control: ")+tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action)))
         }
     }
-    Text(tr("测试控制会向当前 CarPlay 发送一次操作，请核对手机或 CarPlay 是否响应；它不代表实体按键已识别。","Control tests send one action to connected CarPlay. Verify its response; this does not test physical key reception."),fontSize=13.sp)
-    Text(tr("实体按键检测持续 20 秒，只显示收到的按键，不执行 CarPlay 操作。原车自身操作仍可能触发。","Physical-key detection lasts 20 seconds and reports input without forwarding it to CarPlay. Factory actions may still occur."),fontSize=13.sp)
-    OutlinedButton({if(ui.wheelDetecting) ui.stopWheelDetection() else ui.startWheelDetection()},enabled=!ui.stopping && (!ui.busy || ui.connected),modifier=Modifier.heightIn(min=48.dp)) {
+    SettingsDisclosure(tr("控制测试与实体按键检测","Control tests & physical-key detection"),testsOpen,!searching) {if(ui.wheelTestsExpanded) ui.stopWheelDetection();ui.wheelTestsExpanded=!ui.wheelTestsExpanded}
+    if(testsOpen) {
+    Text(tr("测试控制会向当前 CarPlay 发送一次操作，请核对手机或 CarPlay 是否响应；它不代表实体按键已识别。","Control tests send one action to connected CarPlay. Verify its response; this does not test physical key reception."),fontSize=ReceiverTokens.captionText)
+    Text(tr("实体按键检测持续 20 秒，只显示收到的按键，不执行 CarPlay 操作。原车自身操作仍可能触发。","Physical-key detection lasts 20 seconds and reports input without forwarding it to CarPlay. Factory actions may still occur."),fontSize=ReceiverTokens.captionText)
+    OutlinedButton({if(ui.wheelDetecting) ui.stopWheelDetection() else ui.startWheelDetection()},enabled=!ui.stopping && (!ui.busy || ui.connected),modifier=Modifier.heightIn(min=ReceiverTokens.touch)) {
         Text(if(ui.wheelDetecting) tr("停止按键检测","Stop key detection") else tr("检测实体按键","Detect physical keys"))
     }
-    if(ui.wheelMessage.isNotEmpty()) Text(ui.wheelMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
-    if(ui.wheelLastEvent.isNotEmpty()) Text(ui.wheelLastEvent,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
-    Text(tr("MODE 长按 → Siri：仅连接成功后启用；短按切换原车音源。","MODE long press → Siri: available only after connection. Short press keeps the factory source switch."),fontSize=13.sp)
-    TextButton({ui.resetWheelMappings()},enabled=ui.displayEditable && !ui.wheelDetecting,modifier=Modifier.heightIn(min=48.dp)) {Text(tr("恢复吉利默认映射","Restore Geely defaults"))}
+    }
+    if(ui.wheelMessage.isNotEmpty()) Text(ui.wheelMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.secondaryText)
+    if(ui.wheelLastEvent.isNotEmpty()) Text(ui.wheelLastEvent,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.secondaryText)
+    Text(tr("MODE 长按 → Siri：仅连接成功后启用；短按切换原车音源。","MODE long press → Siri: available only after connection. Short press keeps the factory source switch."),fontSize=ReceiverTokens.captionText)
+    TextButton({ui.resetWheelMappings()},enabled=ui.displayEditable && !ui.wheelDetecting,modifier=Modifier.heightIn(min=ReceiverTokens.touch)) {Text(tr("恢复吉利默认映射","Restore Geely defaults"))}
 }
 
 @Composable private fun SettingsRow(title:String,subtitle:String,enabled:Boolean,onClick:()->Unit) {
     Surface(onClick,enabled=enabled,shape=ReceiverTokens.control,color=MaterialTheme.colorScheme.surface.copy(alpha=.7f),modifier=Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text(title,fontSize=16.sp,color=MaterialTheme.colorScheme.onSurface)
-            Text(subtitle,fontSize=14.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(title,fontSize=ReceiverTokens.bodyText,color=MaterialTheme.colorScheme.onSurface)
+            Text(subtitle,fontSize=ReceiverTokens.secondaryText,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -533,21 +603,21 @@ internal class ReceiverUiState {
         PageHeading(tr("诊断","Diagnostics"),tr("记录问题，方便下次排查","Record an issue for troubleshooting"))
         GlassSurface(Modifier.fillMaxWidth().weight(1f)) {
             Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                Text("连接自检",fontSize=16.sp)
-                SelectionContainer {Text(ui.connectionCheck,fontSize=14.sp)}
-                Text("运行指标",fontSize=16.sp)
-                SelectionContainer {Text(ui.runtimeHealth,fontSize=14.sp)}
-                if(ui.timingReport.isNotBlank()) SelectionContainer {Text(ReceiverConnectionTiming.describe(ui.timingReport),fontSize=14.sp)}
-                if(ui.displayApplied.isNotBlank()) Text(ui.displayApplied,fontSize=13.sp)
+                Text("连接自检",fontSize=ReceiverTokens.bodyText)
+                SelectionContainer {Text(ui.connectionCheck,fontSize=ReceiverTokens.secondaryText)}
+                Text("运行指标",fontSize=ReceiverTokens.bodyText)
+                SelectionContainer {Text(ui.runtimeHealth,fontSize=ReceiverTokens.secondaryText)}
+                if(ui.timingReport.isNotBlank()) SelectionContainer {Text(ReceiverConnectionTiming.describe(ui.timingReport),fontSize=ReceiverTokens.secondaryText)}
+                if(ui.displayApplied.isNotBlank()) Text(ui.displayApplied,fontSize=ReceiverTokens.captionText)
                 Text(tr("持续记录本应用操作与连接诊断，保留最近7天、最多约8MB；不含密码、密钥、输入内容、录音或画面。只在你点击后上传。",
-                    "App operations and connection diagnostics: up to 7 days / about 8MiB. No credentials, input content, recordings or frames. Upload only when requested."),fontSize=14.sp)
+                    "App operations and connection diagnostics: up to 7 days / about 8MiB. No credentials, input content, recordings or frames. Upload only when requested."),fontSize=ReceiverTokens.secondaryText)
                 OutlinedTextField(ui.issue,{ui.audit("issue_note_edited","");ui.issue=it.take(1000)},Modifier.fillMaxWidth(),label={Text(tr("问题说明（可选）","Issue notes (optional)"))},enabled=!ui.uploadBusy,minLines=2,maxLines=3)
                 if(!ui.uploadPaired) OutlinedButton({ui.audit("upload_pair_dialog_open","");ui.dialog=ReceiverDialog.PAIR_UPLOAD},enabled=!ui.uploadBusy) {Text(tr("连接日志服务器（首次）","Connect log server (first use)"))}
                 Button({onUpload(false)},enabled=!ui.uploadBusy) {Text(if(ui.uploadBusy) tr("正在处理…","Working…") else tr("上传诊断日志","Upload diagnostics"))}
                 if(ui.pendingUpload) TextButton({onUpload(true)},enabled=!ui.uploadBusy) {Text(tr("重试上次上传","Retry previous upload"))}
-                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=14.sp)
+                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,Modifier.semantics {liveRegion=LiveRegionMode.Polite},fontSize=ReceiverTokens.secondaryText)
                 if(ui.lastReport.isNotBlank()) {
-                    SelectionContainer {Text(tr("最近诊断编号：","Latest report: ")+ui.lastReport,fontSize=14.sp)}
+                    SelectionContainer {Text(tr("最近诊断编号：","Latest report: ")+ui.lastReport,fontSize=ReceiverTokens.secondaryText)}
                     TextButton({clipboard.setText(androidx.compose.ui.text.AnnotatedString(ui.lastReport));ui.audit("report_id_copied","report=${ui.lastReport}")}) {Text(tr("复制诊断编号","Copy report ID"))}
                 }
                 TextButton({ui.audit("local_log_preview","");ui.refreshLocalLog();ui.dialog=ReceiverDialog.LOGS}) {Text(tr("查看本地记录","View local log"))}
@@ -566,16 +636,16 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("连接日志服务器","Connect log server"))},text={
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(tr("输入服务器生成的一次性配对码。以后上传无需再填写；配对凭据仅允许上传，不能查询服务器日志。",
-                    "Enter the server's one-time pairing code. Future uploads need no code. This credential permits upload only, not report retrieval."),fontSize=14.sp)
+                    "Enter the server's one-time pairing code. Future uploads need no code. This credential permits upload only, not report retrieval."),fontSize=ReceiverTokens.secondaryText)
                 OutlinedTextField(code,{code=it.take(12)},singleLine=true,label={Text(tr("12位配对码","12-character code"))},visualTransformation=PasswordVisualTransformation(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Ascii,imeAction=ImeAction.Done),enabled=!ui.uploadBusy)
-                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,fontSize=14.sp)
+                if(ui.uploadMessage.isNotBlank()) Text(ui.uploadMessage,fontSize=ReceiverTokens.secondaryText)
             }
         },confirmButton={TextButton({onPairUpload(code)},enabled=!ui.uploadBusy && code.length==12) {Text(tr("配对","Pair"))}},dismissButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
         return
     }
     if(dialog==ReceiverDialog.LOGS) {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=ReceiverDialog.DIAGNOSTICS},title={Text(tr("本地连接记录","Local connection log"))},
-            text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=14.sp)}},
+            text={SelectionContainer {Text(ui.logs.takeLast(12000),Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState()),fontSize=ReceiverTokens.secondaryText)}},
             confirmButton={TextButton({ui.dialog=ReceiverDialog.DIAGNOSTICS}) {Text(tr("返回","Back"))}})
         return
     }
@@ -583,14 +653,14 @@ internal class ReceiverUiState {
         val button=ReceiverWheelButton.entries.first {it.key==ui.wheelMappingKey}
         ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr(button.title,button.english))},text={
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(tr("保存后立即生效，不会断开 CarPlay。只调整短按操作；MODE 长按仍用于 Siri。","Changes apply immediately without disconnecting. MODE long press remains Siri."),fontSize=14.sp)
+                Text(tr("保存后立即生效，不会断开 CarPlay。只调整短按操作；MODE 长按仍用于 Siri。","Changes apply immediately without disconnecting. MODE long press remains Siri."),fontSize=ReceiverTokens.secondaryText)
                 ReceiverWheelMapping.choices.forEach {action ->
                     val selected=ui.wheelMappings[button.key]==action
-                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {
+                    Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.displayEditable) {
                         ui.saveWheelMapping(button.key,action);ui.dialog=null
                     }.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
                         RadioButton(selected,null,enabled=ui.displayEditable)
-                        Text(tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action)),fontSize=16.sp)
+                        Text(tr(ReceiverWheelMapping.title(action),ReceiverWheelMapping.english(action)),fontSize=ReceiverTokens.bodyText)
                     }
                 }
             }
@@ -602,15 +672,15 @@ internal class ReceiverUiState {
         val choice=ui.audioMappings[role] ?: ReceiverAudioRouting.AUTO
         ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr(role.title,role.english)+tr("输出通道"," output"))},text={
             Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
-                Text(tr("下次连接生效。选择原车音量分类对应的输出通道。跨类映射会改变声音分类和优先级；通道不可用时回退系统路由。","Applies next connection. Choose the car volume category. Cross-category mapping also changes audio priority; unavailable outputs use system routing."),fontSize=14.sp)
+                Text(tr("下次连接生效。选择原车音量分类对应的输出通道。跨类映射会改变声音分类和优先级；通道不可用时回退系统路由。","Applies next connection. Choose the car volume category. Cross-category mapping also changes audio priority; unavailable outputs use system routing."),fontSize=ReceiverTokens.secondaryText)
                 ReceiverAudioRouting.choices.forEach {value ->
-                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {
+                    Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.displayEditable) {
                         ui.saveAudioMapping(role,value);ui.dialog=null
                     }.semantics {this.role=Role.RadioButton;selected=choice==value},verticalAlignment=Alignment.CenterVertically) {
                         RadioButton(choice==value,null,enabled=ui.displayEditable)
                         Column(Modifier.weight(1f).padding(vertical=8.dp)) {
-                            Text(tr(ReceiverAudioRouting.title(value),ReceiverAudioRouting.english(value)),fontSize=16.sp)
-                            if(value !in listOf(ReceiverAudioRouting.AUTO,ReceiverAudioRouting.SYSTEM)) Text(value+if(value in ui.audioOutputBuses) tr(" · 已检测"," · Detected") else tr(" · 当前未检测"," · Not detected"),fontSize=12.sp)
+                            Text(tr(ReceiverAudioRouting.title(value),ReceiverAudioRouting.english(value)),fontSize=ReceiverTokens.bodyText)
+                            if(value !in listOf(ReceiverAudioRouting.AUTO,ReceiverAudioRouting.SYSTEM)) Text(value+if(value in ui.audioOutputBuses) tr(" · 已检测"," · Detected") else tr(" · 当前未检测"," · Not detected"),fontSize=ReceiverTokens.metaText)
                         }
                     }
                 }
@@ -621,12 +691,12 @@ internal class ReceiverUiState {
     if(dialog==ReceiverDialog.DOCK) {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(tr("CarPlay 菜单栏位置","CarPlay dock position"))},text={
             Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
-                Text(tr("下次连接生效。自动模式：竖屏在底部，横屏在左侧，旋转时不断连。右侧选项采用 CarPlay 右舵布局，部分面板也会换边。","Applies next connection. Auto: bottom in portrait, left in landscape, without disconnecting on rotation. Right uses CarPlay's right-hand-drive layout and may move other panels too."),fontSize=14.sp)
+                Text(tr("下次连接生效。自动模式：竖屏在底部，横屏在左侧，旋转时不断连。右侧选项采用 CarPlay 右舵布局，部分面板也会换边。","Applies next connection. Auto: bottom in portrait, left in landscape, without disconnecting on rotation. Right uses CarPlay's right-hand-drive layout and may move other panels too."),fontSize=ReceiverTokens.secondaryText)
                 ReceiverDockPosition.entries.forEach {dock ->
                     val selected=ui.dockPosition==dock.value
-                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {onDock(dock.value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.displayEditable) {onDock(dock.value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
                         RadioButton(selected,null,enabled=ui.displayEditable)
-                        Text(tr(dock.title,when(dock) {ReceiverDockPosition.AUTO->"Auto: portrait bottom / landscape left";ReceiverDockPosition.LEFT->"Left";ReceiverDockPosition.BOTTOM->"Bottom";ReceiverDockPosition.RIGHT->"Right"}),fontSize=16.sp)
+                        Text(tr(dock.title,when(dock) {ReceiverDockPosition.AUTO->"Auto: portrait bottom / landscape left";ReceiverDockPosition.LEFT->"Left";ReceiverDockPosition.BOTTOM->"Bottom";ReceiverDockPosition.RIGHT->"Right"}),fontSize=ReceiverTokens.bodyText)
                     }
                 }
             }
@@ -638,13 +708,13 @@ internal class ReceiverUiState {
         ReceiverGlassDialog(onDismissRequest={ui.dialog=null},title={Text(if(quality) tr("画面清晰度（实验性）","Picture detail (experimental)") else tr("CarPlay 界面大小（实验性）","CarPlay size (experimental)"))},text={
             Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
                 Text(if(quality) tr("下次连接生效。高清请求更大画布，增加解码负载；硬件不支持时自动回退。屏幕本身的像素不会增加。","Applies next connection. HD requests a larger canvas with higher load; unsupported hardware falls back. Panel pixels do not increase.")
-                    else tr("下次连接生效。沿用原版画布缩放：小界面容纳更多内容，也会改变协商分辨率；实际布局由 iPhone 决定。","Applies next connection. Uses the original canvas scaling; smaller controls fit more content and change the negotiated resolution. iPhone determines the layout."),fontSize=14.sp)
+                    else tr("下次连接生效。沿用原版画布缩放：小界面容纳更多内容，也会改变协商分辨率；实际布局由 iPhone 决定。","Applies next connection. Uses the original canvas scaling; smaller controls fit more content and change the negotiated resolution. iPhone determines the layout."),fontSize=ReceiverTokens.secondaryText)
                 val choices=if(quality) ReceiverDisplaySettings.qualityChoices else ReceiverDisplaySettings.sizeChoices
                 choices.forEach {value ->
                     val selected=value==if(quality) ui.quality else ui.carPlaySize
-                    Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.displayEditable) {onDisplay(quality,value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
+                    Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.displayEditable) {onDisplay(quality,value);ui.dialog=null}.semantics {role=Role.RadioButton;this.selected=selected},verticalAlignment=Alignment.CenterVertically) {
                         RadioButton(selected,null,enabled=ui.displayEditable)
-                        Text(if(quality) {if(value==100) tr("标准 · 匹配屏幕","Standard · match screen") else tr("高清 · 125% 画布","HD · 125% canvas")} else when(value) {85->tr("小 · 更多内容","Small · more content");115->tr("大 · 更易阅读","Large · easier reading");else->tr("标准","Standard")},fontSize=16.sp)
+                        Text(if(quality) {if(value==100) tr("标准 · 匹配屏幕","Standard · match screen") else tr("高清 · 125% 画布","HD · 125% canvas")} else when(value) {85->tr("小 · 更多内容","Small · more content");115->tr("大 · 更易阅读","Large · easier reading");else->tr("标准","Standard")},fontSize=ReceiverTokens.bodyText)
                     }
                 }
             }
@@ -656,18 +726,18 @@ internal class ReceiverUiState {
         Column(Modifier.heightIn(max=360.dp).verticalScroll(rememberScrollState())) {
             if(dialog!=ReceiverDialog.PHONE) Text(if(dialog==ReceiverDialog.AUDIO)
                 tr("下次连接生效。较低缓冲响应更快，但更易断音；这不是整条链路的总延迟。","Applies next connection. Lower buffering can respond faster but may stutter; this is not total link latency.")
-                else tr("下次连接生效。60 帧负载更高；当前实现暂不支持 120 帧。","Applies next connection. 60 fps increases load; 120 fps is not supported by this implementation."),fontSize=14.sp)
+                else tr("下次连接生效。60 帧负载更高；当前实现暂不支持 120 帧。","Applies next connection. 60 fps increases load; 120 fps is not supported by this implementation."),fontSize=ReceiverTokens.secondaryText)
             val options=when(dialog) {ReceiverDialog.AUDIO->ReceiverPlaybackSettings.bufferChoices.map {"${it}ms"};ReceiverDialog.FPS->ReceiverPlaybackSettings.fpsChoices.map {"$it fps"};else->ui.phoneChoices.map {it.second}}
             options.forEachIndexed {index,label ->
                 val selected=when(dialog) {ReceiverDialog.AUDIO->ReceiverPlaybackSettings.bufferChoices[index]==ui.bufferMs;ReceiverDialog.FPS->ReceiverPlaybackSettings.fpsChoices[index]==ui.fps;else->false}
-                Row(Modifier.fillMaxWidth().heightIn(min=56.dp).clickable(enabled=ui.editable) {
+                Row(Modifier.fillMaxWidth().heightIn(min=ReceiverTokens.controlMin).clickable(enabled=ui.editable) {
                     if(ui.editable) {
                         if(dialog==ReceiverDialog.PHONE) {val item=ui.phoneChoices[index];onPhone(item.first,item.second)}
                         else onPlayback(dialog==ReceiverDialog.AUDIO,if(dialog==ReceiverDialog.AUDIO) ReceiverPlaybackSettings.bufferChoices[index] else ReceiverPlaybackSettings.fpsChoices[index])
                         ui.dialog=null
                     }
                 }.semantics { role=Role.RadioButton;this.selected=selected },verticalAlignment=Alignment.CenterVertically) {
-                    RadioButton(selected,null,enabled=ui.editable);Text(label,fontSize=16.sp)
+                    RadioButton(selected,null,enabled=ui.editable);Text(label,fontSize=ReceiverTokens.bodyText)
                 }
             }
         }

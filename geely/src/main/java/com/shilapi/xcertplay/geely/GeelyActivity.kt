@@ -444,6 +444,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun connect() {
         if(busy || stopping || controller!=null || destroyed || !foreground) {journal.event("connection","duplicate_or_inactive_blocked");return}
+        ui.attempted=true // Automatic and manual entry points share the same retry/form presentation.
         stopAudioTest()
         if(!requestNecessaryPermissions()) return
         try {getSystemService(BluetoothManager::class.java)?.adapter?.bondedDevices?.forEach {journal.protect(it.name.orEmpty(),it.address)}} catch(_:SecurityException) {journal.event("permissions","device_identity_unavailable",level="WARN")}

@@ -1,7 +1,6 @@
 package com.shilapi.xcertplay.geely
 
 import android.content.Context
-import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -14,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
@@ -24,10 +22,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.translate
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -47,6 +43,24 @@ internal class ReceiverAppearance(context:Context) {
     suspend fun save(mode:ReceiverThemeMode) { data.edit { it[themeKey]=mode.name } }
 }
 internal object ReceiverTokens {
+    fun vehicleScale(model:String)=if(model.contains("KX11",ignoreCase=true)) 1.35f else 1f
+    val heroText=30.sp
+    val titleText=24.sp
+    val sectionText=18.sp
+    val bodyText=16.sp
+    val labelText=15.sp
+    val secondaryText=14.sp
+    val captionText=13.sp
+    val metaText=12.sp
+    val captionLine=18.sp
+    val controlMin=56.dp
+    val statusMax=120.dp
+    val statusPreviewMax=64.dp
+    val actionWidth=280.dp
+    val icon=22.dp
+    val panelElevation=4.dp
+    val glassLightAlpha=.76f
+    val glassDarkAlpha=.86f
     val gap=8.dp
     val page=20.dp
     val touch=48.dp
@@ -66,8 +80,6 @@ internal object ReceiverTokens {
         onPrimaryContainer=Color(0xFFE0EAFF),outline=Color(0xFF8394AC),outlineVariant=Color(0xFF43536A))
 }
 internal val LocalReceiverDark=staticCompositionLocalOf { false }
-private data class Backdrop(val size:IntSize=IntSize.Zero,val origin:Offset=Offset.Zero)
-private val LocalBackdrop=compositionLocalOf { Backdrop() }
 
 @Composable internal fun ReceiverTheme(mode:ReceiverThemeMode, content:@Composable ()->Unit) {
     val dark=when(mode) { ReceiverThemeMode.SYSTEM -> isSystemInDarkTheme();ReceiverThemeMode.DARK -> true;else -> false }
@@ -94,30 +106,19 @@ private fun DrawScope.drawScene(size:IntSize,dark:Boolean) {
     drawPath(ribbon,Color.White.copy(alpha=if(dark) .10f else .62f),style=Stroke(1.3f))
 }
 @Composable internal fun ReceiverScene(modifier:Modifier=Modifier,content:@Composable BoxScope.()->Unit) {
-    var scene by remember { mutableStateOf(Backdrop()) }
     val dark=LocalReceiverDark.current
-    Box(modifier.onGloballyPositioned { scene=Backdrop(it.size,it.positionInRoot()) }) {
-        Canvas(Modifier.matchParentSize().clipToBounds()) { drawScene(scene.size,dark) }
-        CompositionLocalProvider(LocalBackdrop provides scene) { content() }
+    Box(modifier) {
+        Canvas(Modifier.matchParentSize().clipToBounds()) { drawScene(IntSize(size.width.toInt(),size.height.toInt()),dark) }
+        content()
     }
 }
-/** Samples only our static app backdrop, never SurfaceView/video. Foreground text is never blurred. */
+/** One scene behind all panels. Translucent tint never samples or blurs CarPlay video. */
 @Composable internal fun GlassSurface(modifier:Modifier=Modifier,content:@Composable BoxScope.()->Unit) {
-    val scene=LocalBackdrop.current
     val dark=LocalReceiverDark.current
-    var offset by remember { mutableStateOf(Offset.Zero) }
     val shape=ReceiverTokens.panel
     val tint=MaterialTheme.colorScheme.surface
     val highlight=if(dark) Color.White.copy(alpha=.22f) else Color.White.copy(alpha=.86f)
-    Box(modifier.shadow(8.dp,shape,ambientColor=Color(0xFF12508F).copy(alpha=.18f),spotColor=Color(0xFF12508F).copy(alpha=.18f)).clip(shape)
-        .onGloballyPositioned { offset=it.positionInRoot()-scene.origin }
-        .border(1.dp,highlight,shape)) {
-        run {
-            Canvas(if(Build.VERSION.SDK_INT>=31) Modifier.matchParentSize().blur(18.dp) else Modifier.matchParentSize()) {
-                translate(-offset.x,-offset.y) { drawScene(scene.size,dark) }
-            }
-        }
-        Box(Modifier.matchParentSize().background(tint.copy(alpha=if(dark) .74f else .48f)))
-        content()
-    }
+    Box(modifier.shadow(ReceiverTokens.panelElevation,shape,ambientColor=Color(0xFF12508F).copy(alpha=.18f),spotColor=Color(0xFF12508F).copy(alpha=.18f))
+        .clip(shape).background(tint.copy(alpha=if(dark) ReceiverTokens.glassDarkAlpha else ReceiverTokens.glassLightAlpha))
+        .border(1.dp,highlight,shape)) {content()}
 }
