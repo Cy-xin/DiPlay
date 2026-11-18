@@ -24,17 +24,7 @@ internal class MediaClockTrim(
     private var targetFrames: Long,
     private var integral: Double = learnedTrim,
     private val measuresTarget: Boolean = false,
-    private val maxMeasuredTargetFrames:Long = Long.MAX_VALUE,
 ) {
-    // Keep the proven starvation floor tied to the user's start buffer, not the
-    // target later measured from burst delivery.
-    private val safetyTargetFrames=targetFrames
-    private var lowPcm=false
-    var protectedUpdates=0L
-        private set
-    val targetLevelFrames get()=targetFrames
-    val calibrating get()=measuring!=null
-
     private class Measuring(val halfStartNs: Long? = null, val earlierHalfMean: Double? = null) {
         var levelFrameNs = 0.0
     }
@@ -47,6 +37,10 @@ internal class MediaClockTrim(
     private var lastUpdateNs: Long? = null
     private var compressedBacklog = false
     private var measuring: Measuring? = if (measuresTarget) Measuring() else null
+
+    // Read-only diagnostics; clock control remains identical to upstream 615b32ce.
+    val targetLevelFrames get() = targetFrames
+    val calibrating get() = measuring != null
 
     fun measureAgain() {
         if (measuresTarget) measuring = Measuring()
@@ -66,7 +60,6 @@ internal class MediaClockTrim(
         // Decoder backpressure is not evidence that the head unit's clock runs at a different
         // rate; do not teach the *next* music stream an artificial clock correction.
         compressedBacklog = compressedFrames > targetFrames
-        lowPcm = queuedFrames.coerceAtLeast(0L) < safetyTargetFrames / 2
         val buffered = queuedFrames.coerceAtLeast(0L) +
             compressedFrames.coerceIn(0L, sampleRate.toLong() * 16L)
         val elapsedNs = nowNs - lastSampleNs
@@ -104,7 +97,7 @@ internal class MediaClockTrim(
             measuring = Measuring(nowNs, halfMean)
             return
         }
-        targetFrames = earlierHalfMean.roundToLong().coerceIn(1L,maxMeasuredTargetFrames.coerceAtLeast(1L))
+        targetFrames = earlierHalfMean.roundToLong()
         level = 0.0
         measuring = null
     }
@@ -118,42 +111,27 @@ internal class MediaClockTrim(
         else -> start * start / (2 * drained)
     }
 
-    /** Between writes, brake only; never learn a network silence as drift. */
-    fun protectPcm(queuedFrames:Long):Int? {
-        if(safetyTargetFrames<=0L || queuedFrames>=safetyTargetFrames/2 || rate<=sampleRate) return null
-        protectedUpdates++
-        rate=sampleRate
-        return rate
-    }
-
     /** The playback rate to set now, or null to keep the current one. */
     fun rateDue(nowNs: Long): Int? {
         if (measuring != null) {
-            val correction=if(lowPcm) minOf(integral,0.0) else integral
-            if(lowPcm && integral>0.0 && rate>sampleRate) protectedUpdates++
-            val learned = (sampleRate * (1.0 + correction)).roundToInt()
+            val learned = (sampleRate * (1.0 + integral)).roundToInt()
             if (learned == rate) return null
             rate = learned
             return learned
         }
-        val averagedError = level ?: return null
-        val error = if(lowPcm) minOf(averagedError,0.0) else averagedError
+        val error = level ?: return null
         // Without new audio the level says nothing about the clocks: keep the trim as it is.
         if (nowNs - lastSampleNs > STALE_NS) return null
         val previousUpdate = lastUpdateNs
-        val braking=lowPcm && rate>sampleRate
-        if (!braking && previousUpdate != null && nowNs - previousUpdate < UPDATE_NS) return null
+        if (previousUpdate != null && nowNs - previousUpdate < UPDATE_NS) return null
         // A pause between updates is not drift: integrate at most one normal step over it.
         val seconds = if (previousUpdate == null) 0.0 else ((nowNs - previousUpdate) / 1e9).coerceAtMost(MAX_STEP_SECONDS)
         lastUpdateNs = nowNs
-        if (!compressedBacklog && !braking) {
+        if (!compressedBacklog) {
             integral = (integral + KI * error * seconds).coerceIn(-MAX_TRIM, MAX_TRIM)
             learnedTrim = integral
         }
-        val correction=(KP*error+integral).coerceIn(-MAX_TRIM,MAX_TRIM)
-        val safeCorrection=if(lowPcm) minOf(correction,0.0) else correction
-        if(lowPcm && KP*averagedError+integral>0.0) protectedUpdates++
-        val next=(sampleRate*(1.0+safeCorrection)).roundToInt()
+        val next = (sampleRate * (1.0 + (KP * error + integral).coerceIn(-MAX_TRIM, MAX_TRIM))).roundToInt()
         if (next == rate) return null
         rate = next
         return next

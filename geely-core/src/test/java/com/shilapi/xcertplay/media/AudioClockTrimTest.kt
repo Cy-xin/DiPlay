@@ -87,7 +87,7 @@ class AudioClockTrimTest {
         assertTrue(RateTrack.rates.isEmpty())
     }
 
-    @Test fun maintenanceBrakesDrainingMusicWithoutWaitingForAnotherPacket() {
+    @Test fun maintenanceDoesNotRetuneWithoutAnotherPcmWrite() {
         write(96_000)
         fun maintain() = type.getDeclaredMethod("maintainPlaybackBuffer")
             .apply { isAccessible = true }.invoke(renderer)
@@ -95,7 +95,7 @@ class AudioClockTrimTest {
         assertEquals(48_720, RateTrack.rates.last())
         RateTrack.head = 23_000 // 1,000 playable frames left; no new PCM write.
         maintain()
-        assertEquals(48_000, RateTrack.rates.last())
+        assertEquals(listOf(48_720), RateTrack.rates)
         assertEquals(0.0, MediaClockTrim.learnedTrim, 1e-8)
     }
 
@@ -128,8 +128,8 @@ class AudioClockTrimTest {
         assertTrue(trim.calibrating)
         calibrate()
         (get("packetsDroppedTotal") as java.util.concurrent.atomic.AtomicInteger).incrementAndGet()
-        type.getDeclaredMethod("trimClock",AudioTrack::class.java,Boolean::class.javaPrimitiveType)
-            .apply {isAccessible=true}.invoke(renderer,track,false)
+        type.getDeclaredMethod("trimClock",AudioTrack::class.java)
+            .apply {isAccessible=true}.invoke(renderer,track)
         assertTrue(trim.calibrating)
     }
 

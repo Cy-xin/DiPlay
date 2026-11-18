@@ -33,12 +33,4 @@ class ReceiverNavigationFadeTest {
             main.idleFor(Duration.ofSeconds(2));assertEquals(count,ReceiverNavigationMixTest.TrackVolumes.values[media]?.size)
         } finally {mixer.close();tracks.forEach(AudioTrack::release);ReceiverNavigationMixTest.TrackVolumes.values.clear()}
     }
-    @Test fun calibrationDoesNotAdoptExistingOneSecondCompressedBacklogAsTarget() {
-        MediaClockTrim.learnedTrim=0.0
-        val trim=MediaClockTrim(48000,14400,measuresTarget=true,maxMeasuredTargetFrames=33600)
-        repeat(100) {n->trim.sample(14400,n*100_000_000L,compressedFrames=48000);trim.rateDue(n*100_000_000L)}
-        assertFalse(trim.calibrating);assertTrue(trim.targetLevelFrames<=33600)
-        assertTrue(trim.rate>=48000)
-        MediaClockTrim.learnedTrim=0.0
-    }
 }

@@ -200,64 +200,6 @@ class MediaClockTrimTest {
         // song should not inherit a +1.5% learned pitch error caused by a temporary stall.
         assertEquals(0.0, MediaClockTrim.learnedTrim, 1e-8)
     }
-    @Test fun compressedBurstCannotAccelerateADepletedPcmQueue() {
-        val trim = MediaClockTrim(48_000, 14_400)
-        for (second in 0..10) {
-            trim.sample(1_700, second * 1_000_000_000L, compressedFrames = 45 * 1024L)
-            trim.rateDue(second * 1_000_000_000L)
-            assertTrue("rate=${trim.rate}", trim.rate <= 48_000)
-        }
-        assertEquals(0.0, MediaClockTrim.learnedTrim, 1e-8)
-    }
-
-    @Test fun depletedPcmOverridesBothSmoothedSurplusAndPositiveLearnedDrift() {
-        MediaClockTrim.learnedTrim = 0.01
-        val trim = MediaClockTrim(48_000, 14_400)
-        trim.sample(24_000, 0)
-        trim.rateDue(0)
-        assertTrue(trim.rate > 48_000)
-        // Frequent samples retain a high smoothed level even as actual PCM drains.
-        for (step in 1..10) {
-            trim.sample(1_700, step * 100_000_000L)
-        }
-        trim.rateDue(1_000_000_000L)
-        assertEquals(48_000, trim.rate)
-        assertTrue(trim.protectedUpdates > 0)
-        assertEquals(0.01, MediaClockTrim.learnedTrim, 1e-8)
-    }
-
-    @Test fun healthyPcmCanStillCatchUpAfterACompressedBurst() {
-        val trim = MediaClockTrim(48_000, 14_400)
-        trim.sample(1_700, 0, compressedFrames = 45 * 1024L)
-        trim.rateDue(0)
-        trim.sample(24_000, 1_000_000_000L, compressedFrames = 45 * 1024L)
-        trim.rateDue(1_000_000_000L)
-        assertTrue(trim.rate > 48_000)
-    }
-
-    @Test fun safetyBrakingDoesNotWaitForTheOneSecondClockUpdate() {
-        val trim = MediaClockTrim(48_000, 14_400)
-        trim.sample(24_000, 0)
-        trim.rateDue(0)
-        assertTrue(trim.rate > 48_000)
-        trim.sample(1_700, 100_000_000L, compressedFrames = 45 * 1024L)
-        assertEquals(48_000, trim.rateDue(100_000_000L))
-        assertEquals(0.0, MediaClockTrim.learnedTrim, 1e-8)
-    }
-
-    @Test fun betweenWriteProtectionNeverLearnsNetworkSilenceAsClockDrift() {
-        MediaClockTrim.learnedTrim = 0.007
-        val trim = MediaClockTrim(48_000, 14_400)
-        trim.sample(24_000, 0)
-        trim.rateDue(0)
-        assertTrue(trim.rate > 48_000)
-        assertNull(trim.protectPcm(14_400))
-        assertEquals(48_000, trim.protectPcm(1_700))
-        repeat(100) { assertNull(trim.protectPcm(0)) }
-        assertEquals(0.007, MediaClockTrim.learnedTrim, 1e-8)
-        assertEquals(1L, trim.protectedUpdates)
-    }
-
     @Test fun measuresSteadyBurstLevelInsteadOfTreatingStartThresholdAsTheTarget() {
         val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
         var queued=38_400.0 // 800ms burst peak, 600ms time-average level.
@@ -290,20 +232,6 @@ class MediaClockTrimTest {
         assertEquals(24_000L,trim.targetLevelFrames)
         trim.measureAgain()
         assertTrue(trim.calibrating)
-    }
-
-    @Test fun calibrationDoesNotLearnBeforePlaybackMovesOrAccelerateLowPcm() {
-        MediaClockTrim.learnedTrim=.01
-        val trim=MediaClockTrim(48_000,14_400,measuresTarget=true)
-        for(step in 0..50) {
-            val now=step*100_000_000L
-            trim.sample(1700,now,compressedFrames=45*1024L,headMoving=false)
-            trim.rateDue(now)
-            assertTrue(trim.rate<=48_000)
-        }
-        assertTrue(trim.calibrating)
-        assertEquals(14_400L,trim.targetLevelFrames)
-        assertEquals(.01,MediaClockTrim.learnedTrim,1e-8)
     }
 
 }

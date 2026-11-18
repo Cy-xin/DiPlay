@@ -2179,7 +2179,7 @@ private class AudioRenderer(
         val capacityBytes = built.bufferSizeInFrames * frameBytes
         startThresholdBytes = MediaAudioBuffer.startBytesFor(plan.startBytes, capacityBytes, PREBUFFER_WRITE_CHUNK_BYTES)
         // Only music plays long enough for the clocks to drift apart; calls keep their echo reference exact.
-        clockTrim = if (mappedChannel == AudioChannel.MEDIA) MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong(), measuresTarget = true, maxMeasuredTargetFrames = (startThresholdBytes / frameBytes).toLong() + format.sampleRate * 400L / 1000) else null
+        clockTrim = if (mappedChannel == AudioChannel.MEDIA) MediaClockTrim(format.sampleRate, (startThresholdBytes / frameBytes).toLong(), measuresTarget = true) else null
         val trackMetadata = runCatching {
             "api=${Build.VERSION.SDK_INT} trackState=${built.state} trackRate=${built.sampleRate} " +
                 "usage=${trackAttributes?.usage} contentType=${trackAttributes?.contentType} " +
@@ -2686,28 +2686,22 @@ private class AudioRenderer(
         if (device?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) onRoutedToEarpiece?.invoke()
     }
 
-    private fun trimClock(track: AudioTrack, safetyOnly: Boolean = false) {
+    private fun trimClock(track: AudioTrack) {
         val trim = clockTrim ?: return
+        val now = System.nanoTime()
+        val compressedRtpFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample)
+            ?: 0L
+        val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
+            format.rtpClockRate.coerceAtLeast(1)
+        val dropped = packetsDroppedTotal.get() + inputDropped
+        if (dropped != droppedAtLastTrim) {
+            droppedAtLastTrim = dropped
+            trim.measureAgain()
+        }
         val head = track.playbackHeadPosition
-        val pcmFrames = bufferProgress.queuedBytes(head) / frameBytes
-        val rate = if (safetyOnly) {
-            trim.protectPcm(pcmFrames)
-        } else {
-            val now = System.nanoTime()
-            val compressedRtpFrames = mediaLagGuard?.pendingFrames(queue, newestRtpSample, AudioPacket::sample)
-                ?: 0L
-            val compressedPcmFrames = compressedRtpFrames * format.sampleRate /
-                format.rtpClockRate.coerceAtLeast(1)
-            val dropped = packetsDroppedTotal.get() + inputDropped
-            if(dropped != droppedAtLastTrim) {
-                droppedAtLastTrim = dropped
-                trim.measureAgain()
-            }
-            trim.sample(pcmFrames, now, compressedPcmFrames,
-                headMoving = head != headAtPlaybackStart,
-                arrivedFrameNs = queuedFrameNsSince(trim.lastSampleNs, now))
-            trim.rateDue(now)
-        } ?: return
+        trim.sample(bufferProgress.queuedBytes(head) / frameBytes, now, compressedPcmFrames,
+            headMoving = head != headAtPlaybackStart, arrivedFrameNs = queuedFrameNsSince(trim.lastSampleNs, now))
+        val rate = trim.rateDue(now) ?: return
         val result = runCatching { track.setPlaybackRate(rate) }.getOrDefault(AudioTrack.ERROR)
         if (result != AudioTrack.SUCCESS) {
             // The track keeps its rate; music then plays as it did before the trim.
@@ -2755,8 +2749,6 @@ private class AudioRenderer(
                 report("Audio: rebuffer paused audioType=${format.audioType} rebufferCount=$rebufferCount retainedMs=$retainedMs")
             }
         }
-        // Check draining PCM between bursts, without teaching network silence as clock drift.
-        if (playbackStarted) trimClock(track, safetyOnly = true)
         // A short final burst may never reach the start threshold. Play it after a bounded wait.
         if (!playbackStarted && prebufferBytes > 0 && queue.isEmpty() &&
             System.nanoTime() - lastPcmWriteNs >= BUFFER_TAIL_WAIT_NS) {
@@ -2809,7 +2801,7 @@ private class AudioRenderer(
                 "pcmMs=${(queuedFrames ?: 0L) * 1000L / format.sampleRate.coerceAtLeast(1)} " +
                 "compressedMs=${compressedFrames * 1000L / format.rtpClockRate.coerceAtLeast(1)} " +
                 "targetMs=${startThresholdBytes * 1000L / bytesPerSecond.coerceAtLeast(1)} " +
-                "rate=${trim.rate} protectedUpdates=${trim.protectedUpdates} " +
+                "rate=${trim.rate} clockModel=upstream " +
                 "measuredTargetMs=${trim.targetLevelFrames * 1000L / format.sampleRate.coerceAtLeast(1)} calibrating=${trim.calibrating} ended=$force")
         }
         if (format.codec != AudioCodecKind.LPCM) {
