@@ -20,8 +20,8 @@ class ReceiverWheelKeysTest {
         listener.onShortClick(200400,0);listener.onHoldingPressStarted(200400,0);listener.onLongPressTriggered(200400,0);listener.onHoldingPressStopped(200400,0)
         listener.onShortClick(200231,0);listener.onLongPressTriggered(200231,0)
         Shadows.shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(listOf(4 to false,5 to false,3 to false,-1 to true),calls)
+        assertEquals(listOf(4 to false,5 to false,-1 to true),calls)
         listener.onShortClick(200087,0);keys.close();Shadows.shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(4,calls.size)
+        assertEquals(3,calls.size)
     }
 }

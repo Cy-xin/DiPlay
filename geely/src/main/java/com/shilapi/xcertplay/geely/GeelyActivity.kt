@@ -48,6 +48,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     private var sink: AndroidMediaSink? = null
     private val releasingSinks=java.util.concurrent.CopyOnWriteArraySet<AndroidMediaSink>()
     private var wheelKeys:ReceiverWheelKeys?=null
+    private var wheelForeground=false
     private var wheelProbe:ReceiverWheelKeys?=null
     private var wheelDetectionTimeout:Runnable?=null
     private var currentSurface: Surface? = null
@@ -272,6 +273,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         val safe=ReceiverWheelMapping.action(key,action)
         store.prefs.edit().putInt(button.preference,safe).apply()
         ui.wheelMappings=ui.wheelMappings+(key to safe)
+        updateWheelControlScope()
         ui.wheelMessage="已保存，立即生效。可测试控制，再检测实体按键。"
         journal.event("operation","wheel_mapping_saved","key=$key action=$safe")
     }
@@ -279,6 +281,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(!ui.displayEditable || ui.wheelDetecting) return
         store.prefs.edit().apply {ReceiverWheelButton.entries.forEach {remove(it.preference)}}.apply()
         ui.wheelMappings=ReceiverWheelMapping.defaults
+        updateWheelControlScope()
         ui.wheelMessage="已恢复吉利默认映射，立即生效。"
         journal.event("operation","wheel_mapping_reset")
     }
@@ -288,6 +291,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         ui.wheelMessage=if(sent) "已发送${ReceiverWheelMapping.title(action)}测试，请确认 CarPlay 是否响应。" else "测试未发送：CarPlay 控制通道不可用，请检查连接。"
         journal.event("operation","wheel_control_test","action=$action queued=$sent")
     }
+    internal fun updateWheelControlScope() {
+        wheelKeys?.setForegroundCarPlay(connected && foreground && wheelForeground && ui.showCarPlay && !stopping && !destroyed && !ui.wheelDetecting)
+    }
     private fun createWheelListener(token:Int)=ReceiverWheelKeys(applicationContext,{action,long ->
         if(token==generation && connected && !stopping && !destroyed && !ui.wheelDetecting) {
             val sent=if(long) controller?.requestSiri() else controller?.sendMediaButton(action)
@@ -295,6 +301,9 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         }
     },{detail ->
         journal.event("operation","wheel_listener",detail)
+        if(detail=="play_pause_takeover=true accepted=false owned=false") {
+            ui.wheelMessage="车机未允许接管播放／暂停键，已停止重复转发。请使用 CarPlay 屏幕控制；原车按键行为仍需实车确认。"
+        }
         if(ui.wheelDetecting && token==generation) {
             if(detail=="registered=true") ui.wheelMessage="监听已就绪，请按方向盘按键。检测期间不执行 CarPlay 操作。"
             else if(detail=="bind=false" || detail.startsWith("register_failed=") || detail=="service_disconnected") {
@@ -315,7 +324,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(!ReceiverAudioRouting.isGeely(Build.MODEL)) {
             ui.wheelMessage="实体按键检测需要吉利车机。手机上可修改映射，连接 CarPlay 后可测试控制。";return
         }
-        ui.wheelDetecting=true;ui.wheelLastEvent="";ui.wheelMessage="正在启动 20 秒按键检测…"
+        ui.wheelDetecting=true;updateWheelControlScope();ui.wheelLastEvent="";ui.wheelMessage="正在启动 20 秒按键检测…"
         journal.event("operation","wheel_detection_started","connected=$connected durationMs=20000")
         if(!connected) {wheelProbe=createWheelListener(generation);wheelProbe?.start()}
         else ui.wheelMessage="请在 20 秒内按方向盘按键。检测期间不执行 CarPlay 操作。"
@@ -326,6 +335,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         wheelProbe?.close();wheelProbe=null
         if(ui.wheelDetecting) {
             ui.wheelDetecting=false;ui.wheelMessage="按键检测已结束；正常映射已恢复。"
+            updateWheelControlScope()
             journal.event("operation","wheel_detection_stopped")
         }
     }
@@ -597,12 +607,14 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
         if(!connected) return
         pictureRecovery.stop()
         ui.showCarPlay=false;ui.settingsOpen=false;ui.dialog=null
+        updateWheelControlScope()
         update("CarPlay 已连接。可返回画面，或主动断开连接。")
         journal.event("operation","receiver_home_shown","session_retained=true")
     }
     private fun showCarPlay() {
         if(!connected) return
         ui.showCarPlay=true;ui.settingsOpen=false;ui.dialog=null
+        updateWheelControlScope()
         requestSurfaceFit("carplay_shown")
         journal.event("operation","carplay_shown","session_retained=true")
     }
@@ -725,6 +737,7 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
     }
     private fun applyState() {
         ui.busy=busy;ui.stopping=stopping;ui.connected=connected
+        updateWheelControlScope()
         requestSurfaceFit()
         if(connected && ui.showCarPlay) { ui.settingsOpen=false;ui.dialog=null }
     }
@@ -813,15 +826,15 @@ class GeelyActivity : androidx.activity.ComponentActivity() {
             journal.event("touch","app_touch","action=${event.actionMasked} pointers=${event.pointerCount} settings=${ui.settingsOpen} dialog=${ui.dialog}")
         return super.dispatchTouchEvent(event)
     }
-    override fun onResume() {super.onResume();journal.event("lifecycle","resume");requestSurfaceFit("resume")}
-    override fun onPause() {journal.event("lifecycle","pause");super.onPause()}
-    override fun onStart() { super.onStart();foreground=true;autoConnect.open(ui.autoConnectOnOpen);journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
+    override fun onResume() {super.onResume();wheelForeground=true;updateWheelControlScope();journal.event("lifecycle","resume");requestSurfaceFit("resume")}
+    override fun onPause() {wheelForeground=false;updateWheelControlScope();journal.event("lifecycle","pause");super.onPause()}
+    override fun onStart() { super.onStart();foreground=true;updateWheelControlScope();autoConnect.open(ui.autoConnectOnOpen);journal.foreground(true);networkDiagnostic();ReceiverSystemBars.apply(this,ui.hideSystemBars) }
     override fun onWindowFocusChanged(hasFocus:Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if(::journal.isInitialized) journal.event("lifecycle","window_focus","focused=$hasFocus")
         if(hasFocus && foreground) ReceiverSystemBars.apply(this,ui.hideSystemBars)
     }
-    override fun onStop() { autoConnect.suppress();surfaceWork?.cancel();stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
+    override fun onStop() { foreground=false;wheelKeys?.setForegroundCarPlay(false);autoConnect.suppress();surfaceWork?.cancel();stopWheelDetection();pictureRecovery.stop();stopAudioTest();if(recovering) {cancelRecovery();ui.busy=false;update("自动恢复已暂停，请返回后点击连接。")} ;journal.foreground(false);saveInputs();foreground=false;ReceiverSystemBars.apply(this,false);journal.event("connection","background_retained","connected=$connected connecting=$busy");super.onStop() }
     override fun onDestroy() {
         surfaceWork?.cancel();pictureRecovery.stop()
         ++audioTestGeneration;stopAudioTest()

@@ -10,8 +10,8 @@ android {
         applicationId = "com.shihab.diplay"
         minSdk = 30
         targetSdk = 30
-        versionCode = 138
-        versionName = "0.9.6-geely-auto-connect"
+        versionCode = 139
+        versionName = "0.9.7-geely-wheel-ownership"
     }
     authRoot?.let { sourceSets.getByName("main").assets.srcDir(it) }
     buildTypes {
